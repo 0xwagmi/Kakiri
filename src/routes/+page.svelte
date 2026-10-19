@@ -27,7 +27,13 @@
   };
   type Node = { class: string; name: string; description: string; virtual_mic: boolean };
   type Device = { index: number; name: string; channels: number; rate: number };
-  type MicStatus = { present: boolean; source: string; sink: string; can_create: boolean };
+  type MicStatus = {
+    present: boolean;
+    source: string;
+    sink: string;
+    persistent: boolean;
+    can_manage: boolean;
+  };
   type Voice = {
     id: number;
     label: string;
@@ -369,6 +375,32 @@
     }
   }
 
+  async function installMic() {
+    busy = true;
+    try {
+      mic = await invoke<MicStatus>("install_virtual_mic");
+      await refreshDevices();
+      flash("Virtual mic will persist across restarts");
+    } catch (e) {
+      flash(String(e));
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function removeMic() {
+    busy = true;
+    try {
+      mic = await invoke<MicStatus>("remove_virtual_mic");
+      await refreshDevices();
+      flash("Persistent mic removed");
+    } catch (e) {
+      flash(String(e));
+    } finally {
+      busy = false;
+    }
+  }
+
   async function tone() {
     try {
       await invoke("play_test_tone", { route: monitorOn && !mic?.present ? "monitor" : "mic" });
@@ -582,7 +614,7 @@
         width="116px"
       />
       <button class="ghost" onclick={tone}>Test tone</button>
-      {#if !mic?.present && mic?.can_create}
+      {#if !mic?.present && mic?.can_manage}
         <button onclick={createMic} disabled={busy}>Create mic</button>
       {/if}
       <button class="stop" onclick={stopAll} disabled={!voices.length}><Square size={12} fill="currentColor" /> Stop all</button>
@@ -592,8 +624,10 @@
   {#if !mic?.present}
     <div class="banner">
       No virtual mic yet.
-      {#if mic?.can_create}
+      {#if mic?.can_manage}
         <button class="link" onclick={createMic}>Create “Soundboard Mic”</button>
+        <span class="muted">or</span>
+        <button class="link" onclick={installMic}>keep it across restarts</button>
       {:else}
         Install VB-CABLE (Windows) or <code>brew install blackhole-2ch</code> (macOS), then pick it as output.
       {/if}
@@ -686,7 +720,15 @@
   {:else if view === "pads"}
     <Pads sounds={allLibSounds} play={playPath} />
   {:else}
-    <Settings {theme} onTheme={setTheme} onClearCache={clearCaches} />
+    <Settings
+      {theme}
+      onTheme={setTheme}
+      onClearCache={clearCaches}
+      {mic}
+      micBusy={busy}
+      onInstallMic={installMic}
+      onRemoveMic={removeMic}
+    />
   {/if}
 
   <footer class="nowbar">

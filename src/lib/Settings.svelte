@@ -5,6 +5,18 @@
   export let theme: string;
   export let onTheme: (t: string) => void;
   export let onClearCache: () => void;
+  export let mic: MicStatus | null = null;
+  export let micBusy = false;
+  export let onInstallMic: () => void = () => {};
+  export let onRemoveMic: () => void = () => {};
+
+  type MicStatus = {
+    present: boolean;
+    source: string;
+    sink: string;
+    persistent: boolean;
+    can_manage: boolean;
+  };
 
   let cleared = "";
 
@@ -35,12 +47,45 @@
   </section>
 
   <section>
+    <h2>Virtual microphone</h2>
+    {#if !mic}
+      <p class="muted">Checking…</p>
+    {:else if !mic.can_manage}
+      <p class="muted">
+        Kakiri can't create a virtual microphone on this platform. Install
+        <b>VB-CABLE</b> (Windows) or <b>BlackHole</b> (macOS), then choose
+        <code>CABLE Input</code> / <code>BlackHole 2ch</code> as the output.
+      </p>
+    {:else}
+      <p class="muted">
+        {#if mic.present}Running{:else}Not running{/if} ·
+        {#if mic.persistent}persists across restarts{:else}temporary (stops with Kakiri){/if}.<br />
+        Discord should use <b>{mic.source}</b> as its input device.
+      </p>
+      <div class="row">
+        {#if mic.persistent}
+          <button class="ghost" onclick={onRemoveMic} disabled={micBusy}>
+            Remove persistent mic
+          </button>
+        {:else}
+          <button onclick={onInstallMic} disabled={micBusy}>Keep across restarts</button>
+        {/if}
+      </div>
+      <p class="muted">
+        Keeping it installs a PipeWire config, so the mic exists from login on and
+        Discord always has a valid input — even while Kakiri is closed. Removing it
+        takes effect once PipeWire restarts.
+      </p>
+    {/if}
+  </section>
+
+  <section>
     <h2>Maintenance</h2>
     <div class="row">
-      <button class="ghost" onclick={clearCache}>Clear decoded audio + cover caches</button>
+      <button class="ghost" onclick={clearCache}>Clear cover-art cache</button>
       {#if cleared}<span class="ok">{cleared}</span>{/if}
     </div>
-    <p class="muted">Frees memory used for decoded PCM and embedded cover art.</p>
+    <p class="muted">Frees memory used for embedded cover art.</p>
   </section>
 
   <section>

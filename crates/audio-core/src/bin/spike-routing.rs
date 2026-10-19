@@ -13,8 +13,6 @@
 //!   spike-routing passthrough --input <source> [--output X] [--gain 1.0] [--seconds 6]
 
 use std::path::Path;
-#[cfg(target_os = "linux")]
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -33,8 +31,6 @@ use audio_core::input::PipeWireCliInput;
 use audio_core::output::PipeWireOutput;
 
 const MIC_SINK: &str = "Soundboard-Sink";
-#[cfg(target_os = "linux")]
-const MIC_SOURCE: &str = "Soundboard-Source";
 
 /// Output backend: native PipeWire on Linux, cpal elsewhere.
 fn make_output(target: String, fmt: BusFormat) -> Box<dyn AudioOutput> {
@@ -300,40 +296,55 @@ fn cmd_stream(args: &[String]) -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn cmd_mic(action: &str) -> Result<()> {
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "pw-loopback.*Soundboard-Sink"])
-        .stderr(Stdio::null())
-        .status();
-    std::thread::sleep(Duration::from_millis(400));
-
+    use audio_core::virtualmic;
     match action {
+        "config" => {
+            print!("{}", virtualmic::CONFIG);
+            return Ok(());
+        }
+        "path" => {
+            match virtualmic::dropin_path() {
+                Some(p) => println!("{}", p.display()),
+                None => anyhow::bail!("cannot determine the config directory"),
+            }
+            return Ok(());
+        }
+        "status" => {
+            let m = virtualmic::status().map_err(anyhow::Error::msg)?;
+            println!(
+                "present={} persistent={} sink={} source={}",
+                m.present, m.persistent, m.sink, m.source
+            );
+            return Ok(());
+        }
+        "install" => {
+            let m = virtualmic::install_persistent().map_err(anyhow::Error::msg)?;
+            if let Some(p) = virtualmic::dropin_path() {
+                println!("drop-in installed at {}", p.display());
+            }
+            println!("present={} persistent={}", m.present, m.persistent);
+            return Ok(());
+        }
         "down" => {
-            println!("Soundboard mic stopped (if it was running).");
+            let m = virtualmic::remove_persistent().map_err(anyhow::Error::msg)?;
+            println!(
+                "drop-in removed. present={} persistent={}",
+                m.present, m.persistent
+            );
+            if m.present {
+                println!("note: a daemon-created loopback disappears when PipeWire restarts.");
+            }
             return Ok(());
         }
         "up" => {}
-        other => anyhow::bail!("unknown mic action {other:?} (use up|down)"),
+        other => anyhow::bail!("unknown mic action {other:?} (use up|down|status|config|path|install)"),
     }
 
-    let child = Command::new("pw-loopback")
-        .args([
-            format!("--capture-props=node.name={MIC_SINK} media.class=Audio/Sink"),
-            format!(
-                "--playback-props=node.name={MIC_SOURCE} media.class=Audio/Source node.description=\"Soundboard Mic\""
-            ),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()?;
-    println!("pw-loopback pid {}", child.id());
-    std::thread::sleep(Duration::from_millis(700));
-
-    let ok = devices::pipewire_nodes()?.iter().any(|n| n.name == MIC_SINK);
-    if ok {
-        println!("Soundboard mic up: sink '{MIC_SINK}' → source 'Soundboard Mic'.");
+    let m = virtualmic::ensure().map_err(anyhow::Error::msg)?;
+    if m.present {
+        println!("Soundboard mic up: sink '{}' → source '{}'.", m.sink, m.source);
     } else {
-        anyhow::bail!("pw-loopback started but '{MIC_SINK}' did not appear");
+        anyhow::bail!("pw-loopback started but '{}' did not appear", m.sink);
     }
     Ok(())
 }

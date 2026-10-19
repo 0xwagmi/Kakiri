@@ -55,7 +55,9 @@ before committing to the full build — they retire the riskiest unknowns.
   toggle + source picker + level. Validated end-to-end via
   `spike-routing passthrough`.
 - [x] Device / output-target picker.
-- [x] Linux: create/destroy `Soundboard Mic` (`pw-loopback`); status indicator.
+- [x] Linux: virtual mic (`pw-loopback`); status indicator. Auto-created at
+  launch; optional **persistent** PipeWire drop-in so Discord keeps a valid
+  input device even when Kakiri is closed.
 - [ ] Windows/macOS: virtual-cable detection + install guide.
 - [ ] Onboarding: Discord settings checklist + **Test tone** button. (test tone
   exists; the checklist is a banner only.)

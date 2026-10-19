@@ -15,10 +15,7 @@ use audio_core::input::AudioInput;
 use audio_core::library::Folder;
 use audio_core::mixer::{Retrigger, Route, VoiceInfo};
 use audio_core::output::AudioOutput;
-
-const MIC_SINK: &str = "Soundboard-Sink";
-#[cfg(target_os = "linux")]
-const MIC_SOURCE: &str = "Soundboard-Source";
+use audio_core::virtualmic::{self, VirtualMic as MicStatus};
 
 #[derive(Clone)]
 struct AppState {
@@ -85,12 +82,6 @@ fn make_input(target: String, fmt: BusFormat) -> Box<dyn AudioInput> {
     }
 }
 
-fn output_available() -> bool {
-    audio_core::devices::pipewire_nodes()
-        .map(|ns| ns.iter().any(|n| n.name == MIC_SINK))
-        .unwrap_or(false)
-}
-
 // ---------------------------------------------------------------------------
 // Devices
 // ---------------------------------------------------------------------------
@@ -116,14 +107,6 @@ struct Devices {
     outputs: Vec<Device>,
     inputs: Vec<Device>,
     nodes: Vec<Node>,
-}
-
-#[derive(Serialize)]
-struct MicStatus {
-    present: bool,
-    source: String,
-    sink: String,
-    can_create: bool,
 }
 
 #[tauri::command]
@@ -167,100 +150,36 @@ async fn list_devices() -> Result<Devices, String> {
     .map_err(|e| e.to_string())?
 }
 
-#[cfg(not(target_os = "linux"))]
-fn is_virtual_cable(name: &str) -> bool {
-    let n = name.to_lowercase();
-    ["cable", "voicemeeter", "blackhole", "loopback audio", "soundflower", "virtual audio"]
-        .iter()
-        .any(|k| n.contains(k))
-}
-
 #[tauri::command]
 async fn virtual_mic_status() -> Result<MicStatus, String> {
-    tauri::async_runtime::spawn_blocking(virtual_mic_status_now)
+    tauri::async_runtime::spawn_blocking(virtualmic::status)
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn virtual_mic_status_now() -> Result<MicStatus, String> {
-    #[cfg(target_os = "linux")]
-    {
-        let nodes = audio_core::devices::pipewire_nodes().map_err(|e| e.to_string())?;
-        Ok::<MicStatus, String>(MicStatus {
-            present: nodes.iter().any(|n| n.name == MIC_SINK),
-            source: MIC_SOURCE.to_string(),
-            sink: MIC_SINK.to_string(),
-            can_create: true,
-        })
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let outputs = audio_core::devices::cpal_outputs().unwrap_or_default();
-        let inputs = audio_core::devices::cpal_inputs().unwrap_or_default();
-        let sink = outputs.iter().find(|d| is_virtual_cable(&d.name)).map(|d| d.name.clone());
-        let source = inputs.iter().find(|d| is_virtual_cable(&d.name)).map(|d| d.name.clone());
-        Ok::<MicStatus, String>(MicStatus {
-            present: sink.is_some() || source.is_some(),
-            source: source
-                .or_else(|| sink.clone())
-                .unwrap_or_else(|| "CABLE Output".to_string()),
-            sink: sink.unwrap_or_else(|| "CABLE Input".to_string()),
-            can_create: false,
-        })
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn mic_create_impl() -> Result<MicStatus, String> {
-    use std::process::{Command, Stdio};
-    use std::time::Duration;
-
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "pw-loopback.*Soundboard-Sink"])
-        .stderr(Stdio::null())
-        .status();
-    std::thread::sleep(Duration::from_millis(300));
-
-    Command::new("pw-loopback")
-        .args([
-            format!("--capture-props=node.name={MIC_SINK} media.class=Audio/Sink"),
-            format!(
-                "--playback-props=node.name={MIC_SOURCE} media.class=Audio/Source node.description=\"Soundboard Mic\""
-            ),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("failed to spawn pw-loopback: {e}"))?;
-
-    std::thread::sleep(Duration::from_millis(600));
-    virtual_mic_status_now()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn mic_create_impl() -> Result<MicStatus, String> {
-    Err("this build cannot create a virtual mic; install VB-CABLE (Windows) or BlackHole (macOS)".into())
-}
-
+/// Create the virtual mic for this session (an ephemeral `pw-loopback` on Linux).
 #[tauri::command]
-fn create_virtual_mic() -> Result<MicStatus, String> {
-    mic_create_impl()
+async fn create_virtual_mic() -> Result<MicStatus, String> {
+    tauri::async_runtime::spawn_blocking(virtualmic::ensure)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
+/// Install a PipeWire drop-in so the virtual mic is created by the daemon from
+/// boot on, and survives Kakiri quitting. (Windows/macOS: not supported.)
 #[tauri::command]
-fn destroy_virtual_mic() -> Result<MicStatus, String> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::process::{Command, Stdio};
-        use std::time::Duration;
-        let _ = Command::new("pkill")
-            .args(["-9", "-f", "pw-loopback.*Soundboard-Sink"])
-            .stderr(Stdio::null())
-            .status();
-        std::thread::sleep(Duration::from_millis(300));
-    }
-    virtual_mic_status_now()
+async fn install_virtual_mic() -> Result<MicStatus, String> {
+    tauri::async_runtime::spawn_blocking(virtualmic::install_persistent)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Remove the drop-in and stop any ephemeral loopback.
+#[tauri::command]
+async fn remove_virtual_mic() -> Result<MicStatus, String> {
+    tauri::async_runtime::spawn_blocking(virtualmic::remove_persistent)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // ---------------------------------------------------------------------------
@@ -538,11 +457,10 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             let fmt = BusFormat::default();
-            let target = if output_available() {
-                MIC_SINK.to_string()
-            } else {
-                String::new()
-            };
+            // Bring the virtual mic up (the drop-in already did, if installed);
+            // never block startup waiting for it.
+            virtualmic::autostart();
+            let target = virtualmic::status().map(|m| m.sink).unwrap_or_default();
             let engine = Engine::new(fmt, make_output(target, fmt));
             app.manage(AppState {
                 engine,
@@ -554,7 +472,8 @@ pub fn run() {
             list_devices,
             virtual_mic_status,
             create_virtual_mic,
-            destroy_virtual_mic,
+            install_virtual_mic,
+            remove_virtual_mic,
             set_output_target,
             set_monitor,
             monitor_status,

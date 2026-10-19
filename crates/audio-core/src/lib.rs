@@ -17,5 +17,6 @@ pub mod pw_common;
 pub mod resample;
 pub mod stream;
 pub mod tags;
+pub mod virtualmic;
 
 pub use bus::BusFormat;
