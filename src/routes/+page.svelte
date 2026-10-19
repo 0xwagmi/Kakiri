@@ -186,7 +186,7 @@
         path,
         gain: masterGain,
         looped: loop,
-        route: "mic",
+        route: monitorOn ? "both" : "mic",
         retrigger,
       });
     } catch (e) {

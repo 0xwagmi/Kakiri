@@ -90,6 +90,61 @@
     if (p.soundPath) play(p.soundPath, p.name || nameFor(p.soundPath));
   }
 
+  /** Map a KeyboardEvent.code to a token the Tauri shortcut parser accepts. */
+  function keyToken(code: string): string | null {
+    if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+    if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+    if (/^F([1-9]|1[0-2])$/.test(code)) return code;
+    if (/^Numpad[0-9]$/.test(code)) return "Num" + code.slice(-1);
+    const map: Record<string, string> = {
+      Space: "Space",
+      Enter: "Enter",
+      NumpadEnter: "Enter",
+      Tab: "Tab",
+      Minus: "-",
+      Equal: "=",
+      BracketLeft: "[",
+      BracketRight: "]",
+      Backslash: "\\",
+      Semicolon: ";",
+      Quote: "'",
+      Comma: ",",
+      Period: ".",
+      Slash: "/",
+      Backquote: "`",
+      ArrowUp: "Up",
+      ArrowDown: "Down",
+      ArrowLeft: "Left",
+      ArrowRight: "Right",
+      Home: "Home",
+      End: "End",
+      PageUp: "PageUp",
+      PageDown: "PageDown",
+      Insert: "Insert",
+      Delete: "Delete",
+    };
+    return map[code] ?? null;
+  }
+
+  /** Capture the key combo the user presses instead of making them type it. */
+  function captureHotkey(e: KeyboardEvent, i: number) {
+    e.preventDefault();
+    if (e.key === "Escape" || e.key === "Backspace" || e.key === "Delete") {
+      pads[i].hotkey = "";
+    } else {
+      const token = keyToken(e.code);
+      if (!token) return; // modifier-only press → keep waiting
+      const mods: string[] = [];
+      if (e.ctrlKey) mods.push("Ctrl");
+      if (e.altKey) mods.push("Alt");
+      if (e.shiftKey) mods.push("Shift");
+      if (e.metaKey) mods.push("Super");
+      pads[i].hotkey = [...mods, token].join("+");
+    }
+    pads = [...pads];
+    syncHotkeys();
+  }
+
   onMount(async () => {
     const stored = localStorage.getItem(LS_PADS);
     if (stored) {
@@ -136,14 +191,16 @@
               onPick(i);
             }}
           />
-          <input
-            placeholder="hotkey e.g. Ctrl+Alt+1"
-            value={p.hotkey}
-            onchange={(e) => {
-              pads[i].hotkey = e.currentTarget.value;
-              syncHotkeys();
-            }}
-          />
+          <div
+            class="hotkey"
+            class:set={!!p.hotkey}
+            tabindex="0"
+            role="textbox"
+            title="Click, then press the key combo (Esc / Backspace clears)"
+            onkeydown={(e) => captureHotkey(e, i)}
+          >
+            {p.hotkey || "click, then press keys"}
+          </div>
           <button class="clr" onclick={() => clearPad(i)}>clear</button>
         {:else}
           <button class="hit" onclick={() => trigger(p)} title={p.soundPath ?? "empty pad"}>
@@ -203,24 +260,24 @@
     padding: 1px 6px;
   }
 
-  input {
-    appearance: none;
-    -webkit-appearance: none;
+  .hotkey {
     width: 100%;
+    box-sizing: border-box;
+    min-height: 29px;
+    display: flex;
+    align-items: center;
     background: var(--bg);
-    color: var(--text);
+    color: var(--muted);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 5px 6px;
+    padding: 5px 8px;
     font-size: 12px;
-    box-sizing: border-box;
-  }
-  input:focus {
+    cursor: text;
     outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent-ring);
   }
-  .pad.err input { border-color: var(--danger); }
+  .hotkey.set { color: var(--text); border-color: var(--accent); }
+  .hotkey:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-ring); }
+  .pad.err .hotkey { border-color: var(--danger); }
   .clr { background: none; color: var(--muted); padding: 2px 0; font-size: 11px; }
 
   button.ghost { background: var(--panel-3); color: var(--text-2); }
