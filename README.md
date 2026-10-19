@@ -111,3 +111,7 @@ app reuses conceptually:
 
 This project is a **clean-room Rust rewrite/expansion**, not a port. The Python
 repo keeps working; nothing here imports from it.
+
+## License
+
+MIT © 0xwagmi — see [LICENSE](LICENSE).
