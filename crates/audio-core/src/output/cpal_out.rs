@@ -106,10 +106,10 @@ impl AudioOutput for CpalOutput {
                 }
             })?;
 
-        match ready_rx.recv_timeout(Duration::from_secs(3)) {
+        match ready_rx.recv_timeout(Duration::from_millis(300)) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return Err(anyhow!(e)),
-            Err(e) => return Err(anyhow!("cpal output: start timeout: {e}")),
+            Err(_) => {} // not ready yet — it comes up on its own thread
         }
 
         self.producer = Some(producer);

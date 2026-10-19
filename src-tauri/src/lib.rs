@@ -129,7 +129,10 @@ struct MicStatus {
 }
 
 #[tauri::command]
-fn list_devices() -> Result<Devices, String> {
+async fn list_devices() -> Result<Devices, String> {
+    // Device enumeration (ALSA/cpal + pw-dump) can take a while — keep it off
+    // the main thread so the window stays responsive at startup.
+    tauri::async_runtime::spawn_blocking(|| {
     let outputs = audio_core::devices::cpal_outputs()
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -160,7 +163,10 @@ fn list_devices() -> Result<Devices, String> {
             description: n.description,
         })
         .collect();
-    Ok(Devices { outputs, inputs, nodes })
+        Ok::<Devices, String>(Devices { outputs, inputs, nodes })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -172,11 +178,17 @@ fn is_virtual_cable(name: &str) -> bool {
 }
 
 #[tauri::command]
-fn virtual_mic_status() -> Result<MicStatus, String> {
+async fn virtual_mic_status() -> Result<MicStatus, String> {
+    tauri::async_runtime::spawn_blocking(virtual_mic_status_now)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn virtual_mic_status_now() -> Result<MicStatus, String> {
     #[cfg(target_os = "linux")]
     {
         let nodes = audio_core::devices::pipewire_nodes().map_err(|e| e.to_string())?;
-        Ok(MicStatus {
+        Ok::<MicStatus, String>(MicStatus {
             present: nodes.iter().any(|n| n.name == MIC_SINK),
             source: MIC_SOURCE.to_string(),
             sink: MIC_SINK.to_string(),
@@ -189,7 +201,7 @@ fn virtual_mic_status() -> Result<MicStatus, String> {
         let inputs = audio_core::devices::cpal_inputs().unwrap_or_default();
         let sink = outputs.iter().find(|d| is_virtual_cable(&d.name)).map(|d| d.name.clone());
         let source = inputs.iter().find(|d| is_virtual_cable(&d.name)).map(|d| d.name.clone());
-        Ok(MicStatus {
+        Ok::<MicStatus, String>(MicStatus {
             present: sink.is_some() || source.is_some(),
             source: source
                 .or_else(|| sink.clone())
@@ -225,7 +237,7 @@ fn mic_create_impl() -> Result<MicStatus, String> {
         .map_err(|e| format!("failed to spawn pw-loopback: {e}"))?;
 
     std::thread::sleep(Duration::from_millis(600));
-    virtual_mic_status()
+    virtual_mic_status_now()
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -250,7 +262,7 @@ fn destroy_virtual_mic() -> Result<MicStatus, String> {
             .status();
         std::thread::sleep(Duration::from_millis(300));
     }
-    virtual_mic_status()
+    virtual_mic_status_now()
 }
 
 // ---------------------------------------------------------------------------
