@@ -103,9 +103,13 @@
     flex: 1;
     overflow-y: auto;
     padding: 16px 20px;
-    max-width: 640px;
   }
-  section { margin-bottom: 22px; }
+  /* Constrain the reading width, but let the scroll container stay full-bleed
+     so its scrollbar sits at the window edge, not mid-screen. */
+  section {
+    max-width: 640px;
+    margin-bottom: 22px;
+  }
   h2 {
     font-size: 12px;
     text-transform: uppercase;
