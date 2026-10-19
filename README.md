@@ -41,7 +41,7 @@ were your voice.
 
 - Single self-contained binary per OS — no Python runtime, no ffmpeg, no
   `pw-play` shell-outs required for decoding (`symphonia` is pure Rust).
-- Low-latency, real-time-friendly audio (`cpal` + `rodio`).
+- Low-latency, real-time audio: `symphonia` (decode) + `pipewire-rs` on Linux, `cpal` elsewhere.
 - Native-looking UI via **Tauri 2** (Rust core + web frontend) with a small
   download; global hotkeys, tray, single-instance all have first-class plugins.
 - Cross-platform packaging (`tauri build` → `.msi`, `.dmg`, `.AppImage`/`.deb`).
@@ -109,18 +109,6 @@ What Spike S1 proved: a generated 440 Hz tone written through
 `AudioOutput`/`PipeWireCliOutput` was captured back off `Soundboard-Sink`'s
 monitor at exactly `peak = 0.25` (the requested amplitude), and `pw-loopback`
 exposed `Soundboard Mic` as a Discord-recordable source.
-
-## Relationship to the existing project
-The Python `../voice_to_caption_translator/` repo proved out the pieces this
-app reuses conceptually:
-
-- `recreate_ai_mic.sh` — how to make a PipeWire virtual mic (`pw-loopback`).
-- `speak.py` — the "play PCM into a named sink" pattern (`pw-play --target`).
-- `song_to_mic.py` — the "route *other* app audio into the mic" pattern
-  (later feature: capture an app/stream, not just files).
-
-This project is a **clean-room Rust rewrite/expansion**, not a port. The Python
-repo keeps working; nothing here imports from it.
 
 ## License
 
