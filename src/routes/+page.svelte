@@ -6,7 +6,7 @@
   import Pads from "$lib/Pads.svelte";
   import Select from "$lib/Select.svelte";
   import Settings from "$lib/Settings.svelte";
-  import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog } from "$lib/icons";
+  import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog, Volume2 } from "$lib/icons";
 
   type Sound = {
     id: string;
@@ -542,19 +542,21 @@
           title="Voice source"
           width="185px"
         />
-        <input
-          type="range"
-          min="0"
-          max="2"
-          step="0.01"
-          bind:value={micGain}
-          onchange={applyMic}
-          title="Mic level"
-        />
+        <label class="seg" title="Microphone level">
+          <Mic size={14} />
+          <input
+            type="range"
+            min="0"
+            max="2"
+            step="0.01"
+            bind:value={micGain}
+            onchange={applyMic}
+          />
+        </label>
       {/if}
 
-      <label class="seg" title="Volume">
-        Vol
+      <label class="seg" title="Master volume — all soundboard sounds">
+        <Volume2 size={15} />
         <input
           type="range"
           min="0"
