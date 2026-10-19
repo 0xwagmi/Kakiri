@@ -270,6 +270,23 @@
     }
   }
 
+  function setTheme(t: string) {
+    theme = t;
+    savePrefs();
+  }
+
+  async function clearCaches() {
+    try {
+      await invoke("clear_cache");
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  function applyThemeToDom(t: string) {
+    if (typeof document !== "undefined") document.documentElement.dataset.theme = t;
+  }
+
   async function applyTarget() {
     savePrefs();
     try {
@@ -363,7 +380,8 @@
     }
   }
 
-  onMount(async () => {
+  onMount(() => {
+    void (async () => {
     const storedPrefs = localStorage.getItem(LS_PREFS);
     if (storedPrefs) {
       try {
@@ -418,6 +436,7 @@
     }
     if (roots.length) await refreshLibrary(false);
     poll = setInterval(pollVoices, 400);
+    })();
     return () => clearInterval(poll);
   });
 
@@ -437,6 +456,7 @@
     { value: "", label: "choose source…" },
     ...sources().map((s) => ({ value: s.name, label: s.label })),
   ];
+  $: applyThemeToDom(theme);
   $: searchHits = search.trim()
     ? allSounds(folders).filter((s) => {
         const q = search.trim().toLowerCase();

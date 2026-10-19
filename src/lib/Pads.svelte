@@ -145,7 +145,8 @@
     syncHotkeys();
   }
 
-  onMount(async () => {
+  onMount(() => {
+    void (async () => {
     const stored = localStorage.getItem(LS_PADS);
     if (stored) {
       try {
@@ -161,6 +162,7 @@
       const pad = pads.find((p) => p.canonical && p.canonical === e.payload);
       if (pad) trigger(pad);
     });
+    })();
     return () => unlisten?.();
   });
 </script>

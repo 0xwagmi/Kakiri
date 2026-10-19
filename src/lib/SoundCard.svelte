@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { Headphones, Music } from "$lib/icons";
 
-  export type Sound = {
+  type Sound = {
     id: string;
     path: string;
     name: string;

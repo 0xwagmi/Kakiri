@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ChevronDown } from "$lib/icons";
 
-  export type Option = { value: string; label: string };
+  type Option = { value: string; label: string };
 
   export let value = "";
   export let options: Option[] = [];
