@@ -172,6 +172,13 @@ impl Mixer {
         }
     }
 
+    /// Set the gain of **every** playing voice (master volume).
+    pub fn set_all_gain(&mut self, gain: f32) {
+        for v in &mut self.voices {
+            v.gain = gain;
+        }
+    }
+
     pub fn active(&self) -> Vec<VoiceInfo> {
         self.voices
             .iter()

@@ -233,6 +233,17 @@
     }
   }
 
+  /** Master volume — applies live to every playing sound (and is the default for new ones). */
+  async function applyMaster(v: number) {
+    masterGain = v;
+    gainEdit = {}; // reset per-voice overrides so sliders reflect the new level
+    try {
+      await invoke("set_master_gain", { gain: v });
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
   async function applyTarget() {
     savePrefs();
     try {
@@ -482,7 +493,15 @@
 
       <label class="seg" title="Volume">
         Vol
-        <input type="range" min="0" max="1" step="0.01" bind:value={masterGain} onchange={savePrefs} />
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          bind:value={masterGain}
+          oninput={(e) => applyMaster(Number(e.currentTarget.value))}
+          onchange={savePrefs}
+        />
       </label>
 
       <button class="ghost" class:on={loop} onclick={() => { loop = !loop; savePrefs(); }} title="Loop played sounds" aria-label="Loop">

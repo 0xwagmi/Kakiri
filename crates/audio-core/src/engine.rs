@@ -281,6 +281,11 @@ impl Engine {
         self.mixer.lock().unwrap().seek(id, fraction);
     }
 
+    /// Set every playing voice's gain (master volume).
+    pub fn set_all_gain(&self, gain: f32) {
+        self.mixer.lock().unwrap().set_all_gain(gain);
+    }
+
     pub fn active(&self) -> Vec<VoiceInfo> {
         self.mixer.lock().unwrap().active()
     }
