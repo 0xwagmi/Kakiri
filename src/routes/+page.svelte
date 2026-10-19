@@ -5,7 +5,8 @@
   import SoundCard from "$lib/SoundCard.svelte";
   import Pads from "$lib/Pads.svelte";
   import Select from "$lib/Select.svelte";
-  import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat } from "$lib/icons";
+  import Settings from "$lib/Settings.svelte";
+  import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog } from "$lib/icons";
 
   type Sound = {
     id: string;
@@ -52,6 +53,7 @@
   let micSource = "";
   let micGain = 1.0;
   let retrigger = "layer";
+  let theme = "default";
 
   const retriggerOpts = [
     { value: "layer", label: "Layer" },
@@ -61,7 +63,7 @@
   let loop = false;
   let masterGain = 0.85;
   let search = "";
-  let view: "library" | "pads" = "library";
+  let view: "library" | "pads" | "settings" = "library";
   let voices: Voice[] = [];
   let scrub: { id: number; pos: number } | null = null;
   let gainEdit: Record<number, number> = {};
@@ -79,7 +81,7 @@
   function savePrefs() {
     localStorage.setItem(
       LS_PREFS,
-      JSON.stringify({ target, monitorOn, monitorTarget, loop, masterGain, micMix, micSource, micGain, retrigger }),
+      JSON.stringify({ target, monitorOn, monitorTarget, loop, masterGain, micMix, micSource, micGain, retrigger, theme }),
     );
   }
 
@@ -354,6 +356,7 @@
         micSource = p.micSource ?? micSource;
         micGain = p.micGain ?? micGain;
         retrigger = p.retrigger ?? retrigger;
+        theme = p.theme ?? theme;
       } catch {
         /* ignore */
       }
@@ -437,6 +440,13 @@
         >Library</button
       >
       <button class="ghost" class:on={view === "pads"} onclick={() => (view = "pads")}>Pads</button>
+      <button
+        class="ghost"
+        class:on={view === "settings"}
+        onclick={() => (view = "settings")}
+        title="Settings"
+        aria-label="Settings"><Cog size={14} /></button
+      >
     </div>
 
     <div class="controls">
@@ -622,8 +632,10 @@
       {/if}
     </section>
   </div>
-  {:else}
+  {:else if view === "pads"}
     <Pads sounds={allLibSounds} play={playPath} />
+  {:else}
+    <Settings {theme} onTheme={setTheme} onClearCache={clearCaches} />
   {/if}
 
   <footer class="nowbar">
@@ -688,6 +700,22 @@
     --danger: #e0565b;
   }
   :global(svg.lucide) { vertical-align: -0.15em; }
+  :global(:root[data-theme="dark"]) {
+    --bg: #000000;
+    --panel: #16181c;
+    --panel-2: #1c1f23;
+    --panel-3: #22262b;
+    --border: #2f3336;
+    --text: #e7e9ea;
+    --text-2: #c7cbd0;
+    --muted: #71767b;
+    --accent: #1d9bf0;
+    --accent-2: #4db5f5;
+    --accent-dim: #0b2a3d;
+    --accent-ring: rgba(29, 155, 240, 0.35);
+    --ok: #00ba7c;
+    --danger: #f4212e;
+  }
   :global(body) {
     margin: 0;
     height: 100vh;
