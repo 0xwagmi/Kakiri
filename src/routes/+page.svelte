@@ -11,8 +11,11 @@
     id: string;
     path: string;
     name: string;
+    title: string | null;
+    artist: string | null;
     ext: string;
     duration_secs: number | null;
+    has_cover: boolean;
   };
   type Folder = {
     name: string;
@@ -789,7 +792,7 @@
   .chip { background: var(--panel-3); color: var(--text-2); }
   .grid {
     display: grid; gap: 10px;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   }
   .pad { padding: 4px 0; }
 

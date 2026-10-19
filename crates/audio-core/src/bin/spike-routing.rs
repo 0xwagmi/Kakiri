@@ -24,6 +24,7 @@ use audio_core::engine::Engine;
 use audio_core::output::AudioOutput;
 use audio_core::output::PipeWireCliOutput;
 use audio_core::decode;
+use audio_core::tags;
 use audio_core::input::PipeWireCliInput;
 use audio_core::output::PipeWireOutput;
 
@@ -40,6 +41,7 @@ USAGE:
   spike-routing file  <path> [--target X] [--gain 0.8] [--loop] [--seconds 5] [--times 2] [--gap 250]
   spike-routing passthrough --input <source> [--output X] [--gain 1.0] [--seconds 6]
   spike-routing native <path> [--target X] [--gain 0.8] [--seconds 4]   (pipewire-rs output)
+  spike-routing meta <path>                                             (tags + cover art)
   spike-routing mic   up|down"
     );
 }
@@ -217,6 +219,29 @@ fn cmd_native(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn cmd_meta(args: &[String]) -> Result<()> {
+    let path = args
+        .iter()
+        .find(|a| !a.starts_with("--"))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("usage: spike-routing meta <path>"))?;
+    match tags::probe(Path::new(&path)) {
+        Some(i) => {
+            println!(
+                "title={:?} artist={:?} album={:?} dur={:?} cover={}",
+                i.title, i.artist, i.album, i.duration_secs, i.has_cover
+            );
+            if let Some(url) = tags::cover_data_url(Path::new(&path)) {
+                println!("cover data URL: {} bytes", url.len());
+            } else {
+                println!("cover: none");
+            }
+        }
+        None => println!("could not probe"),
+    }
+    Ok(())
+}
+
 fn cmd_mic(action: &str) -> Result<()> {
     let _ = Command::new("pkill")
         .args(["-9", "-f", "pw-loopback.*Soundboard-Sink"])
@@ -264,6 +289,7 @@ fn main() -> Result<()> {
         Some("file") => cmd_file(&args[1..]),
         Some("passthrough") => cmd_passthrough(&args[1..]),
         Some("native") => cmd_native(&args[1..]),
+        Some("meta") => cmd_meta(&args[1..]),
         Some("mic") => cmd_mic(args.get(1).map(String::as_str).unwrap_or("")),
         Some("help") | Some("-h") | Some("--help") | None => {
             usage();

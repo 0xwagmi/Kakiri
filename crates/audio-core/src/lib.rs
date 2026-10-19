@@ -14,5 +14,6 @@ pub mod mixer;
 pub mod output;
 #[cfg(target_os = "linux")]
 pub mod pw_common;
+pub mod tags;
 
 pub use bus::BusFormat;

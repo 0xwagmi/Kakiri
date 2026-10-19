@@ -24,6 +24,8 @@ struct AppState {
     engine: Arc<Engine>,
     /// Decoded PCM cache, keyed by absolute path.
     cache: Arc<Mutex<HashMap<String, Arc<Pcm>>>>,
+    /// Cover-art data-URL cache, keyed by absolute path.
+    art_cache: Arc<Mutex<HashMap<String, Option<String>>>>,
 }
 
 /// The virtual-mic output. Native PipeWire by default on Linux; set
@@ -322,6 +324,23 @@ async fn library_scan(roots: Vec<String>) -> Result<Vec<Folder>, String> {
     .map_err(|e| e.to_string())
 }
 
+/// Embedded cover art for a file as a `data:` URL (cached), or `None`.
+#[tauri::command]
+async fn artwork(state: tauri::State<'_, AppState>, path: String) -> Result<Option<String>, String> {
+    let cache = state.art_cache.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let cached = { cache.lock().unwrap().get(&path).cloned() };
+        if let Some(v) = cached {
+            return Ok::<_, String>(v);
+        }
+        let url = audio_core::tags::cover_data_url(Path::new(&path));
+        cache.lock().unwrap().insert(path, url.clone());
+        Ok(url)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ---------------------------------------------------------------------------
 // Playback
 // ---------------------------------------------------------------------------
@@ -479,6 +498,7 @@ pub fn run() {
             app.manage(AppState {
                 engine,
                 cache: Arc::new(Mutex::new(HashMap::new())),
+                art_cache: Arc::new(Mutex::new(HashMap::new())),
             });
             Ok(())
         })
@@ -496,6 +516,7 @@ pub fn run() {
             play_test_tone,
             default_roots,
             library_scan,
+            artwork,
             play_sound,
             stop_voice,
             stop_all,

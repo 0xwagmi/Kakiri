@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::decode;
+use crate::tags;
 
 pub const AUDIO_EXTS: &[&str] = &[
     "mp3", "wav", "flac", "ogg", "oga", "opus", "m4a", "aac", "aiff", "aif", "mp4", "mka", "wv",
@@ -15,9 +15,15 @@ pub struct Sound {
     /// Stable id: the absolute path.
     pub id: String,
     pub path: String,
+    /// Display name (filename stem).
     pub name: String,
+    /// Embedded title tag, if any.
+    pub title: Option<String>,
+    pub artist: Option<String>,
     pub ext: String,
     pub duration_secs: Option<f32>,
+    /// Whether the file has embedded cover art (fetch lazily via `artwork`).
+    pub has_cover: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,12 +85,16 @@ fn scan_dir(dir: &Path) -> Folder {
                     .and_then(|s| s.to_str())
                     .unwrap_or("unknown")
                     .to_string();
+                let info = tags::probe(&path);
                 sounds.push(Sound {
                     id: path.display().to_string(),
                     path: path.display().to_string(),
                     name: stem,
+                    title: info.as_ref().and_then(|i| i.title.clone()),
+                    artist: info.as_ref().and_then(|i| i.artist.clone()),
                     ext,
-                    duration_secs: decode::probe_duration(&path),
+                    duration_secs: info.as_ref().and_then(|i| i.duration_secs),
+                    has_cover: info.as_ref().map(|i| i.has_cover).unwrap_or(false),
                 });
             }
         }
