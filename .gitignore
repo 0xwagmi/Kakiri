@@ -1,0 +1,29 @@
+# Rust
+/target
+**/*.rs.bk
+**/*.pdb
+nohup.out 
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# SvelteKit
+.svelte-kit/
+/build/
+
+# Tauri
+src-tauri/gen/
+src-tauri/target/
+
+# Local test media / playlists (not part of the app)
+/test_playlist/
+
+# Local / OS
+*.log
+.env
+.env.*
+.DS_Store
+Thumbs.db
+*.swp
