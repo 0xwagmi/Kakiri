@@ -36,6 +36,26 @@ pub fn cpal_outputs() -> Result<Vec<DeviceInfo>> {
     Ok(out)
 }
 
+/// Enumerate input devices via cpal (microphones / virtual cables).
+pub fn cpal_inputs() -> Result<Vec<DeviceInfo>> {
+    let host = cpal::default_host();
+    let mut out = Vec::new();
+    for (index, dev) in host.input_devices()?.enumerate() {
+        let name = dev.to_string();
+        let (channels, rate) = match dev.default_input_config() {
+            Ok(cfg) => (cfg.channels(), cfg.sample_rate()),
+            Err(_) => (0, 0),
+        };
+        out.push(DeviceInfo {
+            index,
+            name,
+            channels,
+            rate,
+        });
+    }
+    Ok(out)
+}
+
 #[derive(Debug, Clone)]
 pub struct NodeInfo {
     pub class: String,

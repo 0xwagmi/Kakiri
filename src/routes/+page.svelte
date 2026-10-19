@@ -45,6 +45,7 @@
   let mic: MicStatus | null = null;
   let nodes: Node[] = [];
   let outputs: Device[] = [];
+  let inputs: Device[] = [];
   let target = "Soundboard-Sink";
   let monitorOn = false;
   let monitorTarget = "";
@@ -115,19 +116,38 @@
     return null;
   }
 
-  const sinks = () => nodes.filter((n) => n.class === "Audio/Sink");
-  const sources = () => nodes.filter((n) => n.class.startsWith("Audio/Source"));
+  // Unified endpoints: prefer PipeWire nodes on Linux, else cpal devices.
+  type Sink = { name: string; label: string; virtual_mic: boolean };
+
+  const isCable = (name: string) =>
+    /cable|voicemeeter|blackhole|loopback audio|soundflower|virtual audio/i.test(name);
+
+  const sinks = (): Sink[] =>
+    nodes.length
+      ? nodes
+          .filter((n) => n.class === "Audio/Sink")
+          .map((n) => ({
+            name: n.name,
+            label:
+              n.name === "Soundboard-Sink"
+                ? "Soundboard Mic (Discord)"
+                : `${n.description || n.name}${n.virtual_mic ? " ★" : ""}`,
+            virtual_mic: n.virtual_mic,
+          }))
+      : outputs.map((d) => ({ name: d.name, label: d.name, virtual_mic: isCable(d.name) }));
+
+  const sources = (): Sink[] =>
+    nodes.length
+      ? nodes
+          .filter((n) => n.class.startsWith("Audio/Source"))
+          .map((n) => ({ name: n.name, label: n.description || n.name, virtual_mic: n.virtual_mic }))
+      : inputs.map((d) => ({ name: d.name, label: d.name, virtual_mic: false }));
 
   /** Best guess for the voice source: a processed one (Easy Effects) if present. */
   function preferredSource(): string {
     const s = sources();
-    const ee = s.find((n) => /easy effects/i.test(n.description || "") || /ee_|easyeffects/i.test(n.name));
+    const ee = s.find((n) => /easy effects/i.test(n.label) || /ee_|easyeffects/i.test(n.name));
     return (ee ?? s[0])?.name ?? "";
-  }
-
-  function labelFor(n: Node) {
-    if (n.name === "Soundboard-Sink") return "Soundboard Mic (Discord)";
-    return `${n.description || n.name}${n.virtual_mic ? " ★" : ""}`;
   }
 
   async function refreshLibrary(keepSelection = true) {
@@ -138,9 +158,10 @@
 
   async function refreshDevices() {
     mic = await invoke<MicStatus>("virtual_mic_status");
-    const d = await invoke<{ outputs: Device[]; nodes: Node[] }>("list_devices");
+    const d = await invoke<{ outputs: Device[]; inputs: Device[]; nodes: Node[] }>("list_devices");
     nodes = d.nodes;
     outputs = d.outputs;
+    inputs = d.inputs;
   }
 
   async function addFolder() {
@@ -399,19 +420,19 @@
 
   $: allLibSounds = allSounds(folders);
   $: navItems = flatten(folders);
-  $: targetNode = nodes.find((n) => n.name === target);
-  $: targetOk = !!targetNode?.virtual_mic;
+  $: targetSink = sinks().find((s) => s.name === target);
+  $: targetOk = !!targetSink?.virtual_mic;
   $: sinkOpts = [
     { value: "", label: "default sink" },
-    ...sinks().map((n) => ({ value: n.name, label: labelFor(n) })),
+    ...sinks().map((s) => ({ value: s.name, label: s.label })),
   ];
   $: monitorOpts = [
     { value: "", label: "default output" },
-    ...sinks().map((n) => ({ value: n.name, label: n.description || n.name })),
+    ...sinks().map((s) => ({ value: s.name, label: s.label })),
   ];
   $: sourceOpts = [
     { value: "", label: "choose source…" },
-    ...sources().map((n) => ({ value: n.name, label: n.description || n.name })),
+    ...sources().map((s) => ({ value: s.name, label: s.label })),
   ];
   $: searchHits = search.trim()
     ? allSounds(folders).filter((s) => {
@@ -543,7 +564,7 @@
 
   {#if mic?.present && !targetOk}
     <div class="banner warn">
-      <TriangleAlert size={13} /> Sounds are going to <b>{targetNode ? labelFor(targetNode) : "default sink"}</b>, which is
+      <TriangleAlert size={13} /> Sounds are going to <b>{targetSink ? targetSink.label : "default sink"}</b>, which is
       <b>not your virtual mic</b> — Discord won't hear them.
       <button class="link" onclick={useSoundboardMic}>Send to Soundboard Mic</button>
     </div>

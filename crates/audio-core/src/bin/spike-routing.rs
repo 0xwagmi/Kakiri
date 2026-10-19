@@ -13,23 +13,51 @@
 //!   spike-routing passthrough --input <source> [--output X] [--gain 1.0] [--seconds 6]
 
 use std::path::Path;
+#[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use audio_core::bus::{self, BusFormat};
+use audio_core::decode;
 use audio_core::devices::{self, NodeInfo};
 use audio_core::engine::Engine;
+use audio_core::input::AudioInput;
 use audio_core::output::AudioOutput;
-use audio_core::output::PipeWireCliOutput;
-use audio_core::decode;
 use audio_core::tags;
+#[cfg(target_os = "linux")]
 use audio_core::input::PipeWireCliInput;
+#[cfg(target_os = "linux")]
 use audio_core::output::PipeWireOutput;
 
 const MIC_SINK: &str = "Soundboard-Sink";
+#[cfg(target_os = "linux")]
 const MIC_SOURCE: &str = "Soundboard-Source";
+
+/// Output backend: native PipeWire on Linux, cpal elsewhere.
+fn make_output(target: String, fmt: BusFormat) -> Box<dyn AudioOutput> {
+    #[cfg(target_os = "linux")]
+    {
+        Box::new(PipeWireOutput::new(target, fmt.rate, fmt.channels))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Box::new(audio_core::output::CpalOutput::new(target, fmt.rate, fmt.channels))
+    }
+}
+
+/// Input backend: PipeWire CLI on Linux, cpal elsewhere.
+fn make_input(target: String, fmt: BusFormat) -> Box<dyn AudioInput> {
+    #[cfg(target_os = "linux")]
+    {
+        Box::new(PipeWireCliInput::new(target, fmt.rate, fmt.channels))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Box::new(audio_core::input::CpalInput::new(target, fmt.rate, fmt.channels))
+    }
+}
 
 fn usage() {
     eprintln!(
@@ -94,7 +122,7 @@ fn cmd_play(args: &[String]) -> Result<()> {
     println!("bus: {} Hz / {} ch  →  target node: {target}", fmt.rate, fmt.channels);
     let pcm = bus::sine(fmt, freq, ms, amp);
 
-    let mut out = PipeWireCliOutput::new(target.clone(), fmt.rate, fmt.channels);
+    let mut out = make_output(target.clone(), fmt);
     out.start()?;
     for i in 1..=repeat {
         println!("  {i}/{repeat}: {freq} Hz for {ms} ms");
@@ -134,8 +162,8 @@ fn cmd_file(args: &[String]) -> Result<()> {
         decoded.pcm.len() / fmt.channels as usize,
     );
 
-    let out = PipeWireCliOutput::new(target.clone(), fmt.rate, fmt.channels);
-    let engine = Engine::new(fmt, Box::new(out));
+    let out = make_output(target.clone(), fmt);
+    let engine = Engine::new(fmt, out);
     let pcm = Arc::new(decoded.pcm);
     let label = Path::new(&path)
         .file_stem()
@@ -170,14 +198,10 @@ fn cmd_passthrough(args: &[String]) -> Result<()> {
     let seconds: u64 = flag(args, "--seconds").and_then(|v| v.parse().ok()).unwrap_or(6);
 
     let fmt = BusFormat::default();
-    let out = PipeWireCliOutput::new(output.clone(), fmt.rate, fmt.channels);
-    let engine = Engine::new(fmt, Box::new(out));
+    let out = make_output(output.clone(), fmt);
+    let engine = Engine::new(fmt, out);
     engine.set_input_gain(gain);
-    engine.set_input(Some(Box::new(PipeWireCliInput::new(
-        input.clone(),
-        fmt.rate,
-        fmt.channels,
-    ))))?;
+    engine.set_input(Some(make_input(input.clone(), fmt)))?;
     println!("passthrough: {input} -> {output} (gain {gain:.2}) for {seconds}s");
     std::thread::sleep(Duration::from_secs(seconds));
     engine.set_input(None).ok();
@@ -204,8 +228,8 @@ fn cmd_native(args: &[String]) -> Result<()> {
         .unwrap_or("sound")
         .to_string();
 
-    let out = PipeWireOutput::new(target.clone(), fmt.rate, fmt.channels);
-    let engine = Engine::new(fmt, Box::new(out));
+    let out = make_output(target.clone(), fmt);
+    let engine = Engine::new(fmt, out);
     println!(
         "native pipewire-rs out → {target}: {} frames, {:.2}s",
         decoded.pcm.len() / fmt.channels as usize,
@@ -242,6 +266,7 @@ fn cmd_meta(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn cmd_mic(action: &str) -> Result<()> {
     let _ = Command::new("pkill")
         .args(["-9", "-f", "pw-loopback.*Soundboard-Sink"])
@@ -290,6 +315,7 @@ fn main() -> Result<()> {
         Some("passthrough") => cmd_passthrough(&args[1..]),
         Some("native") => cmd_native(&args[1..]),
         Some("meta") => cmd_meta(&args[1..]),
+        #[cfg(target_os = "linux")]
         Some("mic") => cmd_mic(args.get(1).map(String::as_str).unwrap_or("")),
         Some("help") | Some("-h") | Some("--help") | None => {
             usage();

@@ -16,18 +16,18 @@ Cross-platform desktop soundboard that plays audio files (and later, streams)
 **through a virtual microphone** so other people in Discord hear it as if it
 were your voice.
 
-> **Status: early alpha — Linux-only audio.** The app is fully functional on
-> **Linux / PipeWire** (native `pipewire-rs`). Windows and macOS *build and
-> launch* but have **no audio backend yet** (`cpal` output/input is TODO).
-> Not production-ready. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status: early alpha.** Fully functional on **Linux / PipeWire** (native
+> `pipewire-rs`). Windows/macOS now have a **`cpal` (WASAPI/CoreAudio) backend**
+> and are pending real-hardware testing. Not production-ready — see
+> [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Platform support
 
 | Platform | Builds / runs | Audio | Virtual mic |
 |----------|:-------------:|:-----:|-------------|
 | **Linux** (PipeWire) | ✅ | ✅ native `pipewire-rs` (+ `pw-play`/`pw-record` fallback) | ✅ auto (`pw-loopback`) |
-| **Windows** | ✅ | ❌ no backend yet (`cpal` TODO) | manual: VB-CABLE |
-| **macOS** | ✅ | ❌ no backend yet (`cpal` TODO) | manual: BlackHole |
+| **Windows** | ✅ | ✅ `cpal` (WASAPI) — *needs testing* | manual: VB-CABLE |
+| **macOS** | ✅ | ✅ `cpal` (CoreAudio) — *needs testing* | manual: BlackHole |
 
 ## Features
 

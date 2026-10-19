@@ -17,6 +17,7 @@ use audio_core::mixer::{Retrigger, Route, VoiceInfo};
 use audio_core::output::AudioOutput;
 
 const MIC_SINK: &str = "Soundboard-Sink";
+#[cfg(target_os = "linux")]
 const MIC_SOURCE: &str = "Soundboard-Source";
 
 #[derive(Clone)]
@@ -49,8 +50,11 @@ fn make_output(target: String, fmt: BusFormat) -> Box<dyn AudioOutput> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (target, fmt);
-        Box::new(audio_core::output::NullOutput)
+        Box::new(audio_core::output::CpalOutput::new(
+            target,
+            fmt.rate,
+            fmt.channels,
+        ))
     }
 }
 
@@ -75,8 +79,11 @@ fn make_input(target: String, fmt: BusFormat) -> Box<dyn AudioInput> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (target, fmt);
-        Box::new(audio_core::input::NullInput)
+        Box::new(audio_core::input::CpalInput::new(
+            target,
+            fmt.rate,
+            fmt.channels,
+        ))
     }
 }
 
@@ -109,6 +116,7 @@ struct Node {
 #[derive(Serialize)]
 struct Devices {
     outputs: Vec<Device>,
+    inputs: Vec<Device>,
     nodes: Vec<Node>,
 }
 
@@ -132,6 +140,16 @@ fn list_devices() -> Result<Devices, String> {
             rate: d.rate,
         })
         .collect();
+    let inputs = audio_core::devices::cpal_inputs()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|d| Device {
+            index: d.index,
+            name: d.name,
+            channels: d.channels,
+            rate: d.rate,
+        })
+        .collect();
     let nodes = audio_core::devices::pipewire_nodes()
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -142,18 +160,44 @@ fn list_devices() -> Result<Devices, String> {
             description: n.description,
         })
         .collect();
-    Ok(Devices { outputs, nodes })
+    Ok(Devices { outputs, inputs, nodes })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_virtual_cable(name: &str) -> bool {
+    let n = name.to_lowercase();
+    ["cable", "voicemeeter", "blackhole", "loopback audio", "soundflower", "virtual audio"]
+        .iter()
+        .any(|k| n.contains(k))
 }
 
 #[tauri::command]
 fn virtual_mic_status() -> Result<MicStatus, String> {
-    let nodes = audio_core::devices::pipewire_nodes().map_err(|e| e.to_string())?;
-    Ok(MicStatus {
-        present: nodes.iter().any(|n| n.name == MIC_SINK),
-        source: MIC_SOURCE.to_string(),
-        sink: MIC_SINK.to_string(),
-        can_create: cfg!(target_os = "linux"),
-    })
+    #[cfg(target_os = "linux")]
+    {
+        let nodes = audio_core::devices::pipewire_nodes().map_err(|e| e.to_string())?;
+        Ok(MicStatus {
+            present: nodes.iter().any(|n| n.name == MIC_SINK),
+            source: MIC_SOURCE.to_string(),
+            sink: MIC_SINK.to_string(),
+            can_create: true,
+        })
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let outputs = audio_core::devices::cpal_outputs().unwrap_or_default();
+        let inputs = audio_core::devices::cpal_inputs().unwrap_or_default();
+        let sink = outputs.iter().find(|d| is_virtual_cable(&d.name)).map(|d| d.name.clone());
+        let source = inputs.iter().find(|d| is_virtual_cable(&d.name)).map(|d| d.name.clone());
+        Ok(MicStatus {
+            present: sink.is_some() || source.is_some(),
+            source: source
+                .or_else(|| sink.clone())
+                .unwrap_or_else(|| "CABLE Output".to_string()),
+            sink: sink.unwrap_or_else(|| "CABLE Input".to_string()),
+            can_create: false,
+        })
+    }
 }
 
 #[cfg(target_os = "linux")]
