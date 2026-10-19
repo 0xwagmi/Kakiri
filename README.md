@@ -1,4 +1,16 @@
-# Kakiri Soundboard
+<p align="center">
+  <img src="static/icon.png" width="140" height="140" alt="Kakiri Soundboard" />
+</p>
+
+<h1 align="center">Kakiri Soundboard</h1>
+
+<p align="center"><em>Play sounds through a virtual microphone in Discord — with your voice.</em></p>
+
+<p align="center">
+  <img alt="status" src="https://img.shields.io/badge/status-early%20alpha-orange" />
+  <img alt="platform" src="https://img.shields.io/badge/audio-Linux%20(PipeWire)-informational" />
+  <img alt="license" src="https://img.shields.io/badge/license-MIT-blue" />
+</p>
 
 _(project folder: `discord-soundboard`)_
 
