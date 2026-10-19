@@ -121,12 +121,17 @@
   // Unified endpoints: prefer PipeWire nodes on Linux, else cpal devices.
   type Sink = { name: string; label: string; virtual_mic: boolean };
 
+  // Computed lists (assigned in `$:` below). Declared here so dependencies are
+  // explicit — Svelte does not track reads *inside* called functions.
+  let sinkList: Sink[] = [];
+  let sourceList: Sink[] = [];
+
   const isCable = (name: string) =>
     /cable|voicemeeter|blackhole|loopback audio|soundflower|virtual audio/i.test(name);
 
-  const sinks = (): Sink[] =>
-    nodes.length
-      ? nodes
+  const computeSinks = (ns: Node[], outs: Device[]): Sink[] =>
+    ns.length
+      ? ns
           .filter((n) => n.class === "Audio/Sink")
           .map((n) => ({
             name: n.name,
@@ -136,20 +141,21 @@
                 : `${n.description || n.name}${n.virtual_mic ? " ★" : ""}`,
             virtual_mic: n.virtual_mic,
           }))
-      : outputs.map((d) => ({ name: d.name, label: d.name, virtual_mic: isCable(d.name) }));
+      : outs.map((d) => ({ name: d.name, label: d.name, virtual_mic: isCable(d.name) }));
 
-  const sources = (): Sink[] =>
-    nodes.length
-      ? nodes
+  const computeSources = (ns: Node[], ins: Device[]): Sink[] =>
+    ns.length
+      ? ns
           .filter((n) => n.class.startsWith("Audio/Source"))
           .map((n) => ({ name: n.name, label: n.description || n.name, virtual_mic: n.virtual_mic }))
-      : inputs.map((d) => ({ name: d.name, label: d.name, virtual_mic: false }));
+      : ins.map((d) => ({ name: d.name, label: d.name, virtual_mic: false }));
 
   /** Best guess for the voice source: a processed one (Easy Effects) if present. */
   function preferredSource(): string {
-    const s = sources();
-    const ee = s.find((n) => /easy effects/i.test(n.label) || /ee_|easyeffects/i.test(n.name));
-    return (ee ?? s[0])?.name ?? "";
+    const ee = sourceList.find(
+      (n) => /easy effects/i.test(n.label) || /ee_|easyeffects/i.test(n.name),
+    );
+    return (ee ?? sourceList[0])?.name ?? "";
   }
 
   async function refreshLibrary(keepSelection = true) {
@@ -442,19 +448,21 @@
 
   $: allLibSounds = allSounds(folders);
   $: navItems = flatten(folders);
-  $: targetSink = sinks().find((s) => s.name === target);
+  $: sinkList = computeSinks(nodes, outputs);
+  $: sourceList = computeSources(nodes, inputs);
+  $: targetSink = sinkList.find((s) => s.name === target);
   $: targetOk = !!targetSink?.virtual_mic;
   $: sinkOpts = [
     { value: "", label: "default sink" },
-    ...sinks().map((s) => ({ value: s.name, label: s.label })),
+    ...sinkList.map((s) => ({ value: s.name, label: s.label })),
   ];
   $: monitorOpts = [
     { value: "", label: "default output" },
-    ...sinks().map((s) => ({ value: s.name, label: s.label })),
+    ...sinkList.map((s) => ({ value: s.name, label: s.label })),
   ];
   $: sourceOpts = [
     { value: "", label: "choose source…" },
-    ...sources().map((s) => ({ value: s.name, label: s.label })),
+    ...sourceList.map((s) => ({ value: s.name, label: s.label })),
   ];
   $: applyThemeToDom(theme);
   $: searchHits = search.trim()
