@@ -478,6 +478,7 @@ fn active_voices(state: tauri::State<'_, AppState>) -> Vec<VoiceInfo> {
 #[tauri::command]
 fn clear_cache(state: tauri::State<'_, AppState>) {
     state.cache.lock().unwrap().clear();
+    state.art_cache.lock().unwrap().clear();
 }
 
 // ---------------------------------------------------------------------------
