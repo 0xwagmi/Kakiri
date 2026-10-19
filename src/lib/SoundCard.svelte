@@ -20,13 +20,6 @@
   export let fmtDur: (d: number | null) => string;
 
   let cover: string | null = null;
-  let warmed = false;
-
-  function prefetch() {
-    if (warmed) return;
-    warmed = true;
-    invoke("prefetch", { path: s.path }).catch(() => {});
-  }
 
   onMount(async () => {
     if (!s.has_cover) return;
@@ -46,8 +39,6 @@
   tabindex="0"
   title="Play into the call"
   onclick={() => play(s)}
-  onmouseenter={prefetch}
-  onfocus={prefetch}
   onkeydown={(e) => e.key === "Enter" && play(s)}
 >
   <button

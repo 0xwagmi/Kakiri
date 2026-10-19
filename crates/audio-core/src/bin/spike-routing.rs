@@ -17,6 +17,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::Result;
 use audio_core::bus::{self, BusFormat};
@@ -69,6 +70,7 @@ USAGE:
   spike-routing file  <path> [--target X] [--gain 0.8] [--loop] [--seconds 5] [--times 2] [--gap 250]
   spike-routing passthrough --input <source> [--output X] [--gain 1.0] [--seconds 6]
   spike-routing native <path> [--target X] [--gain 0.8] [--seconds 4]   (pipewire-rs output)
+  spike-routing stream <path> [--target X] [--gain 0.8] [--seconds 6]   (streaming decode)
   spike-routing meta <path>                                             (tags + cover art)
   spike-routing mic   up|down"
     );
@@ -266,6 +268,36 @@ fn cmd_meta(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn cmd_stream(args: &[String]) -> Result<()> {
+    let path = args
+        .iter()
+        .find(|a| !a.starts_with("--"))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("usage: spike-routing stream <path> [...]"))?;
+    let target = flag(args, "--target").unwrap_or_else(|| MIC_SINK.to_string());
+    let gain: f32 = flag(args, "--gain").and_then(|v| v.parse().ok()).unwrap_or(0.8);
+    let seconds: u64 = flag(args, "--seconds").and_then(|v| v.parse().ok()).unwrap_or(6);
+
+    let fmt = BusFormat::default();
+    let engine = Engine::new(fmt, make_output(target.clone(), fmt));
+    let t0 = Instant::now();
+    let id = engine.play_stream(
+        path.clone(),
+        "stream".to_string(),
+        std::path::PathBuf::from(&path),
+        gain,
+        false,
+        audio_core::mixer::Route::Mic,
+    )?;
+    println!("play_stream -> voice {id} in {:?}", t0.elapsed());
+    std::thread::sleep(Duration::from_secs(seconds));
+    println!("active before stop: {}", engine.active().len());
+    engine.stop_all();
+    std::thread::sleep(Duration::from_millis(200));
+    println!("done.");
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn cmd_mic(action: &str) -> Result<()> {
     let _ = Command::new("pkill")
@@ -314,6 +346,7 @@ fn main() -> Result<()> {
         Some("file") => cmd_file(&args[1..]),
         Some("passthrough") => cmd_passthrough(&args[1..]),
         Some("native") => cmd_native(&args[1..]),
+        Some("stream") => cmd_stream(&args[1..]),
         Some("meta") => cmd_meta(&args[1..]),
         #[cfg(target_os = "linux")]
         Some("mic") => cmd_mic(args.get(1).map(String::as_str).unwrap_or("")),

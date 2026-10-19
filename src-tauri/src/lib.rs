@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
-use audio_core::bus::{BusFormat, Pcm};
+use audio_core::bus::BusFormat;
 use audio_core::engine::Engine;
 use audio_core::input::AudioInput;
 use audio_core::library::Folder;
@@ -23,8 +23,6 @@ const MIC_SOURCE: &str = "Soundboard-Source";
 #[derive(Clone)]
 struct AppState {
     engine: Arc<Engine>,
-    /// Decoded PCM cache, keyed by absolute path.
-    cache: Arc<Mutex<HashMap<String, Arc<Pcm>>>>,
     /// Cover-art data-URL cache, keyed by absolute path.
     art_cache: Arc<Mutex<HashMap<String, Option<String>>>>,
 }
@@ -401,7 +399,8 @@ async fn artwork(state: tauri::State<'_, AppState>, path: String) -> Result<Opti
 // Playback
 // ---------------------------------------------------------------------------
 
-/// Decode (or reuse cached) a file and start a voice. Returns the voice id.
+/// Start a streaming voice for a file. Returns the voice id (or `None` if a
+/// Toggle retrigger stopped the playing copy).
 #[tauri::command]
 async fn play_sound(
     state: tauri::State<'_, AppState>,
@@ -412,30 +411,23 @@ async fn play_sound(
     retrigger: Option<String>,
 ) -> Result<Option<u64>, String> {
     let engine = state.engine.clone();
-    let cache = state.cache.clone();
     let gain = gain.unwrap_or(0.85);
     let looped = looped.unwrap_or(false);
     let route = Route::parse(route.as_deref().unwrap_or("mic"));
     let retrigger = Retrigger::parse(retrigger.as_deref().unwrap_or("layer"));
 
     tauri::async_runtime::spawn_blocking(move || {
-        let cached = { cache.lock().unwrap().get(&path).cloned() };
-        let pcm = match cached {
-            Some(pcm) => pcm,
-            None => {
-                let fmt = engine.format();
-                let decoded = audio_core::decode::decode_file(Path::new(&path), fmt)
-                    .map_err(|e| e.to_string())?;
-                let arc = Arc::new(decoded.pcm);
-                cache.lock().unwrap().insert(path.clone(), arc.clone());
-                arc
-            }
-        };
         let label = Path::new(&path)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("sound")
             .to_string();
+        let start = |engine: &std::sync::Arc<audio_core::engine::Engine>| {
+            engine
+                .play_stream(path.clone(), label.clone(), PathBuf::from(&path), gain, looped, route)
+                .map(Some)
+                .map_err(|e| e.to_string())
+        };
 
         match retrigger {
             // already playing → stop it (play/stop toggle)
@@ -446,10 +438,10 @@ async fn play_sound(
             // restart from the top
             Retrigger::Choke => {
                 engine.stop_key(&path);
-                Ok(Some(engine.play(path, label, pcm, gain, looped, route)))
+                start(&engine)
             }
             // layer another copy on top (default)
-            _ => Ok(Some(engine.play(path, label, pcm, gain, looped, route))),
+            _ => start(&engine),
         }
     })
     .await
@@ -461,31 +453,7 @@ fn stop_voice(state: tauri::State<'_, AppState>, id: u64) {
     state.engine.stop(id);
 }
 
-/// Decode a file into the cache ahead of time (e.g. on hover) so the first
-/// click plays instantly. No-op if already cached.
-#[tauri::command]
-async fn prefetch(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
-    let engine = state.engine.clone();
-    let cache = state.cache.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        if cache.lock().unwrap().contains_key(&path) {
-            return Ok::<(), String>(());
-        }
-        let fmt = engine.format();
-        let decoded = audio_core::decode::decode_file(Path::new(&path), fmt)
-            .map_err(|e| e.to_string())?;
-        let mut c = cache.lock().unwrap();
-        // Crude cap: decoded PCM is large (a 4-min song ≈ 100 MB).
-        if c.len() >= 24 {
-            c.clear();
-        }
-        c.insert(path, Arc::new(decoded.pcm));
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
+/// Decode a file into the cache ahead of time.
 #[tauri::command]
 fn stop_all(state: tauri::State<'_, AppState>) {
     state.engine.stop_all();
@@ -514,7 +482,6 @@ fn active_voices(state: tauri::State<'_, AppState>) -> Vec<VoiceInfo> {
 
 #[tauri::command]
 fn clear_cache(state: tauri::State<'_, AppState>) {
-    state.cache.lock().unwrap().clear();
     state.art_cache.lock().unwrap().clear();
 }
 
@@ -579,7 +546,6 @@ pub fn run() {
             let engine = Engine::new(fmt, make_output(target, fmt));
             app.manage(AppState {
                 engine,
-                cache: Arc::new(Mutex::new(HashMap::new())),
                 art_cache: Arc::new(Mutex::new(HashMap::new())),
             });
             Ok(())
@@ -600,7 +566,6 @@ pub fn run() {
             library_scan,
             artwork,
             play_sound,
-            prefetch,
             stop_voice,
             stop_all,
             set_voice_gain,

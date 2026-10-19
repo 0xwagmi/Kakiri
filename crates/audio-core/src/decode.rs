@@ -4,14 +4,16 @@
 use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
-use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::TrackType;
+use symphonia::core::formats::{FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
+use symphonia::core::units::Time;
 
 use crate::bus::{BusFormat, Pcm};
+use crate::resample::StreamResampler;
 
 pub struct Decoded {
     /// Interleaved f32 PCM at the target bus format.
@@ -43,7 +45,148 @@ pub fn probe_duration(path: &Path) -> Option<f32> {
     Some(frames as f32 / rate as f32)
 }
 
-/// Decode a whole file to interleaved f32 in the target bus format.
+/// Channel-map decoded PCM (interleaved) to `dst_ch` channels.
+pub fn map_channels(input: &[f32], src_ch: usize, dst_ch: usize) -> Vec<f32> {
+    let src_ch = src_ch.max(1);
+    let src_frames = input.len() / src_ch;
+    let mut out = Vec::with_capacity(src_frames * dst_ch);
+    for f in 0..src_frames {
+        let base = f * src_ch;
+        if src_ch == dst_ch {
+            out.extend_from_slice(&input[base..base + src_ch]);
+        } else if src_ch == 1 {
+            let s = input[base];
+            for _ in 0..dst_ch {
+                out.push(s);
+            }
+        } else if dst_ch == 1 {
+            out.push((0..src_ch).map(|c| input[base + c]).sum::<f32>() / src_ch as f32);
+        } else {
+            for c in 0..dst_ch {
+                out.push(input[base + c.min(src_ch - 1)]);
+            }
+        }
+    }
+    out
+}
+
+/// Incremental (streaming) decoder: yields PCM a packet at a time, already
+/// channel-mapped and resampled to the bus format. Used by the per-voice
+/// decoder threads so long files never live entirely in memory.
+pub struct StreamDecoder {
+    format: Box<dyn FormatReader>,
+    decoder: Box<dyn AudioDecoder>,
+    track_id: u32,
+    src_rate: u32,
+    src_channels: usize,
+    target: BusFormat,
+    resampler: StreamResampler,
+    tmp: Vec<f32>,
+    total_frames: u64,
+    duration_secs: f32,
+}
+
+impl StreamDecoder {
+    pub fn open(path: &Path, target: BusFormat) -> Result<Self> {
+        let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let format = symphonia::default::get_probe()
+            .probe(&make_hint(path), mss, Default::default(), MetadataOptions::default())
+            .map_err(|e| anyhow!("unsupported/corrupt format: {e}"))?;
+
+        let (track_id, src_rate, src_channels, total_frames, decoder) = {
+            let track = format
+                .default_track(TrackType::Audio)
+                .ok_or_else(|| anyhow!("no audio track"))?;
+            let params = track
+                .codec_params
+                .as_ref()
+                .and_then(|p| p.audio())
+                .ok_or_else(|| anyhow!("no audio codec parameters"))?;
+            let decoder = symphonia::default::get_codecs()
+                .make_audio_decoder(params, &AudioDecoderOptions::default())
+                .map_err(|e| anyhow!("unsupported codec: {e}"))?;
+            (
+                track.id,
+                params.sample_rate.unwrap_or(target.rate),
+                params.channels.as_ref().map(|c| c.count()).unwrap_or(2),
+                track.num_frames.unwrap_or(0),
+                decoder,
+            )
+        };
+
+        let duration_secs = if total_frames > 0 {
+            total_frames as f32 / src_rate as f32
+        } else {
+            0.0
+        };
+
+        Ok(Self {
+            format,
+            decoder,
+            track_id,
+            src_rate,
+            src_channels,
+            target,
+            resampler: StreamResampler::new(src_rate, target.rate, target.channels),
+            tmp: Vec::new(),
+            total_frames,
+            duration_secs,
+        })
+    }
+
+    pub fn total_frames(&self) -> u64 {
+        self.total_frames
+    }
+
+    pub fn duration_secs(&self) -> f32 {
+        self.duration_secs
+    }
+
+    /// Decode the next packet's worth of audio into `out`. Returns the number of
+    /// interleaved samples appended, or `0` at end-of-stream.
+    pub fn next_chunk(&mut self, out: &mut Vec<f32>) -> Result<usize> {
+        loop {
+            let packet = match self.format.next_packet() {
+                Ok(Some(p)) => p,
+                Ok(None) | Err(SymphoniaError::ResetRequired) => return Ok(0),
+                Err(e) => return Err(e.into()),
+            };
+            if packet.track_id != self.track_id {
+                continue;
+            }
+            match self.decoder.decode(&packet) {
+                Ok(buf) => {
+                    let n = buf.samples_interleaved();
+                    self.tmp.resize(n, 0.0);
+                    buf.copy_to_slice_interleaved(&mut self.tmp[..n]);
+                    let mapped = map_channels(&self.tmp, self.src_channels, self.target.channels as usize);
+                    let before = out.len();
+                    self.resampler.process(&mapped, out);
+                    return Ok(out.len() - before);
+                }
+                Err(SymphoniaError::DecodeError(_) | SymphoniaError::IoError(_)) => continue,
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
+
+    /// Sample-accurate seek to `frame` (in source frames).
+    pub fn seek(&mut self, frame: u64) -> Result<()> {
+        let seconds = frame as f64 / self.src_rate.max(1) as f64;
+        self.format.seek(
+            SeekMode::Accurate,
+            SeekTo::Time {
+                time: Time::try_from_secs_f64(seconds).unwrap_or(Time::ZERO),
+                track_id: Some(self.track_id),
+            },
+        )?;
+        self.resampler.reset();
+        Ok(())
+    }
+}
+
+/// Decode a whole file to the bus format (used by tests / simple callers).
 pub fn decode_file(path: &Path, target: BusFormat) -> Result<Decoded> {
     let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -114,33 +257,9 @@ pub fn decode_file(path: &Path, target: BusFormat) -> Result<Decoded> {
 }
 
 /// Channel-map and resample decoded PCM to the bus format.
-fn to_bus(input: &[f32], src_ch: usize, src_rate: u32, target: BusFormat) -> Pcm {
-    let tch = target.channels as usize;
-    let src_ch = src_ch.max(1);
-    let src_frames = input.len() / src_ch;
-
-    let mut mapped = Vec::with_capacity(src_frames * tch);
-    for f in 0..src_frames {
-        let base = f * src_ch;
-        if src_ch == tch {
-            mapped.extend_from_slice(&input[base..base + src_ch]);
-        } else if src_ch == 1 {
-            let s = input[base];
-            for _ in 0..tch {
-                mapped.push(s);
-            }
-        } else if tch == 1 {
-            let s = (0..src_ch).map(|c| input[base + c]).sum::<f32>() / src_ch as f32;
-            mapped.push(s);
-        } else {
-            // copy up to tch channels, repeating the last available one
-            for c in 0..tch {
-                mapped.push(input[base + c.min(src_ch - 1)]);
-            }
-        }
-    }
-
-    resample_linear(&mapped, tch, src_rate, target.rate)
+pub fn to_bus(input: &[f32], src_ch: usize, src_rate: u32, target: BusFormat) -> Pcm {
+    let mapped = map_channels(input, src_ch, target.channels as usize);
+    resample_linear(&mapped, target.channels as usize, src_rate, target.rate)
 }
 
 /// Simple linear-interpolation resampler (fine for short soundboard clips).

@@ -256,11 +256,30 @@ impl Engine {
         id
     }
 
+    /// Start a voice that streams from a file (decoded by its own thread).
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_stream(
+        &self,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        path: std::path::PathBuf,
+        gain: f32,
+        looped: bool,
+        route: Route,
+    ) -> Result<VoiceId> {
+        let voice = crate::stream::spawn(path, self.format, looped)?;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.mixer
+            .lock()
+            .unwrap()
+            .add_stream(id, key.into(), label.into(), voice, gain, looped, route);
+        Ok(id)
+    }
+
     /// Stop every voice started with this key (for choke/toggle retrigger).
     pub fn stop_key(&self, key: &str) {
         self.mixer.lock().unwrap().stop_key(key);
     }
-
     pub fn is_key_active(&self, key: &str) -> bool {
         self.mixer.lock().unwrap().is_key_active(key)
     }
