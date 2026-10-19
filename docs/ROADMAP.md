@@ -42,7 +42,8 @@ before committing to the full build — they retire the riskiest unknowns.
   (ARCHITECTURE §9).
 - [x] `AudioEngine` + `Mixer` + `AudioOutput` trait with `PipeWireCliOutput`
   (and `NullOutput`); `CpalOutput` still TODO.
-- [x] Decode (symphonia) + resample + in-memory cache.
+- [x] Decode (symphonia) + resample + **streaming playback** (no whole-file
+  cache; see Phase 2).
 - [x] Library scan of chosen folders (mp3/wav/flac/ogg/m4a/…) + duration probe.
 - [x] Folder/playlist browser UI; click a sound → play to selected device.
 - [x] Stop-all + per-voice stop.
@@ -89,7 +90,11 @@ clicked mp3 in Discord" in under 5 minutes, with no terminal use.
 - [x] Persist library, layout, settings (localStorage: roots, prefs, pads).
 - [ ] Tray menu: mute all, volume, quit; single-instance.
 - [ ] VU/peak meters (throttled `levels` events).
-- [ ] Long-file streaming path (don't preload whole songs).
+- [x] Long-file streaming path (don't preload whole songs).
+  - Per-voice decoder thread + lock-free SPSC ring (`stream.rs`); stateful
+    Catmull-Rom resampler (`resample.rs`) continuous across packets.
+    Start latency **6.16 s → 8 ms** on a 4½-min m4a; memory ~0.8 MB/voice
+    (2 s ring) instead of ~104 MB. 0 dropouts (verified off the mic monitor).
 - [ ] Basic error surfacing (missing file, dead device → reconnect).
 
 **Acceptance:** daily-driver-able; a streamer could run an ambience loop and
