@@ -461,6 +461,31 @@ fn stop_voice(state: tauri::State<'_, AppState>, id: u64) {
     state.engine.stop(id);
 }
 
+/// Decode a file into the cache ahead of time (e.g. on hover) so the first
+/// click plays instantly. No-op if already cached.
+#[tauri::command]
+async fn prefetch(state: tauri::State<'_, AppState>, path: String) -> Result<(), String> {
+    let engine = state.engine.clone();
+    let cache = state.cache.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if cache.lock().unwrap().contains_key(&path) {
+            return Ok::<(), String>(());
+        }
+        let fmt = engine.format();
+        let decoded = audio_core::decode::decode_file(Path::new(&path), fmt)
+            .map_err(|e| e.to_string())?;
+        let mut c = cache.lock().unwrap();
+        // Crude cap: decoded PCM is large (a 4-min song ≈ 100 MB).
+        if c.len() >= 24 {
+            c.clear();
+        }
+        c.insert(path, Arc::new(decoded.pcm));
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn stop_all(state: tauri::State<'_, AppState>) {
     state.engine.stop_all();
@@ -575,6 +600,7 @@ pub fn run() {
             library_scan,
             artwork,
             play_sound,
+            prefetch,
             stop_voice,
             stop_all,
             set_voice_gain,
