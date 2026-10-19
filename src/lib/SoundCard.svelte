@@ -67,31 +67,33 @@
     position: relative;
     display: flex;
     align-items: center;
-    gap: 10px;
-    background: var(--panel);
-    border: 1px solid var(--border);
+    gap: 12px;
+    padding: 8px 10px;
     border-radius: 10px;
-    padding: 10px;
-    text-align: left;
     color: var(--text);
     cursor: pointer;
-    min-height: 66px;
+    min-height: 64px;
+    transition: background-color 0.12s ease;
   }
   .card:hover {
-    border-color: var(--accent);
     background: var(--panel-2);
   }
+  .card:focus-visible {
+    background: var(--panel-2);
+    outline: none;
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
   .thumb {
-    width: 44px;
-    height: 44px;
+    width: 46px;
+    height: 46px;
     flex: none;
-    border-radius: 8px;
-    background: var(--bg);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--muted);
+    border-radius: 9px;
+    display: grid;
+    place-items: center;
     overflow: hidden;
+    color: var(--accent);
+    background: var(--panel-3);
+    background: color-mix(in srgb, var(--accent) 13%, transparent);
   }
   .thumb img {
     width: 100%;
@@ -102,11 +104,13 @@
   .info {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 3px;
     min-width: 0;
+    padding-right: 28px;
   }
   .name {
     font-size: 13px;
+    line-height: 1.25;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -120,17 +124,25 @@
   }
   .prev {
     position: absolute;
-    top: 6px;
-    right: 6px;
-    background: none;
-    color: var(--muted);
+    top: 8px;
+    right: 8px;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
     border: 0;
-    padding: 2px 4px;
+    border-radius: 999px;
+    background: var(--panel-3);
+    color: var(--text-2);
     cursor: pointer;
     opacity: 0;
-    font-size: 13px;
+    transition:
+      opacity 0.12s ease,
+      color 0.12s ease;
   }
-  .card:hover .prev {
+  .card:hover .prev,
+  .card:focus-within .prev {
     opacity: 1;
   }
   .prev:hover {

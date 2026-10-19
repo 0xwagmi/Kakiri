@@ -867,8 +867,8 @@
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip { background: var(--panel-3); color: var(--text-2); }
   .grid {
-    display: grid; gap: 10px;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    display: grid; gap: 4px;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   }
   .pad { padding: 4px 0; }
 
