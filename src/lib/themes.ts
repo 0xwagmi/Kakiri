@@ -7,5 +7,5 @@ export type Theme = {
 
 export const THEMES: Theme[] = [
   { id: "default", name: "Kakiri", swatch: ["#0e0b16", "#8b5cf6", "#b79bff"] },
-  { id: "dark", name: "Dark", swatch: ["#000000", "#1d9bf0", "#2f3336"] },
+  { id: "dark", name: "Dark", swatch: ["#000000", "#8b5cf6", "#2f3336"] },
 ];

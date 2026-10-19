@@ -750,10 +750,11 @@
     --text: #e7e9ea;
     --text-2: #c7cbd0;
     --muted: #71767b;
-    --accent: #1d9bf0;
-    --accent-2: #4db5f5;
-    --accent-dim: #0b2a3d;
-    --accent-ring: rgba(29, 155, 240, 0.35);
+    /* keep the Kakiri violet accent instead of X blue */
+    --accent: #8b5cf6;
+    --accent-2: #b79bff;
+    --accent-dim: #2e2350;
+    --accent-ring: rgba(139, 92, 246, 0.35);
     --ok: #00ba7c;
     --danger: #f4212e;
   }
