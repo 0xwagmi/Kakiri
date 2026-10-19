@@ -587,9 +587,6 @@
     <section class="content">
       <div class="content-head">
         <input class="search" placeholder="Search all sounds…" bind:value={search} />
-        {#if selected && !search.trim()}
-          <span class="muted ellipsis">{selected.path}</span>
-        {/if}
       </div>
 
       {#if search.trim()}
@@ -785,7 +782,6 @@
   .content { flex: 1; overflow-y: auto; padding: 14px 18px; min-width: 0; }
   .content-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
   .search { width: 260px; }
-  .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 0 8px; }
 
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
