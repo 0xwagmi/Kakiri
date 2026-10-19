@@ -1,6 +1,16 @@
-# Kakiri Soundboard
+<p align="center">
+  <img src="static/icon.png" width="140" height="140" alt="Kakiri Soundboard" />
+</p>
 
-_(project folder: `discord-soundboard`)_
+<h1 align="center">Kakiri Soundboard</h1>
+
+<p align="center"><em>Play sounds through a virtual microphone in Discord — with your voice.</em></p>
+
+<p align="center">
+  <img alt="status" src="https://img.shields.io/badge/status-early%20alpha-orange" />
+  <img alt="platform" src="https://img.shields.io/badge/audio-Linux%20(PipeWire)-informational" />
+  <img alt="license" src="https://img.shields.io/badge/license-MIT-blue" />
+</p>
 
 Cross-platform desktop soundboard that plays audio files (and later, streams)
 **through a virtual microphone** so other people in Discord hear it as if it
@@ -111,3 +121,7 @@ app reuses conceptually:
 
 This project is a **clean-room Rust rewrite/expansion**, not a port. The Python
 repo keeps working; nothing here imports from it.
+
+## License
+
+MIT © 0xwagmi — see [LICENSE](LICENSE).

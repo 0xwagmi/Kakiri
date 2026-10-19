@@ -1,9 +1,10 @@
 [package]
 name = "soundboard"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Kakiri Soundboard — play audio through a virtual mic in Discord"
+authors = ["0xwagmi"]
 edition = "2024"
+license.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
