@@ -60,6 +60,8 @@
   let search = "";
   let view: "library" | "pads" = "library";
   let voices: Voice[] = [];
+  let scrub: { id: number; pos: number } | null = null;
+  let gainEdit: Record<number, number> = {};
   let busy = false;
   let toast = "";
   let poll: ReturnType<typeof setInterval>;
@@ -213,6 +215,22 @@
 
   async function stopVoice(id: number) {
     await invoke("stop_voice", { id });
+  }
+
+  async function seekVoice(id: number, position: number) {
+    try {
+      await invoke("seek_voice", { id, position });
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  async function setVoiceGain(id: number, gain: number) {
+    try {
+      await invoke("set_voice_gain", { id, gain });
+    } catch (e) {
+      flash(String(e));
+    }
   }
 
   async function applyTarget() {
@@ -594,8 +612,38 @@
     {#each voices as v (v.id)}
       <span class="now" class:mon={v.route === "monitor"}>
         {#if v.route === "monitor"}<Headphones size={12} />{:else if v.looped}<Repeat size={12} />{:else}<Music size={11} />{/if}
-        {v.label}
-        <span class="bar"><i style="width: {(v.progress * 100).toFixed(0)}%"></i></span>
+        <span class="lbl">{v.label}</span>
+        <input
+          class="seek"
+          type="range"
+          min="0"
+          max="1"
+          step="0.001"
+          title="Seek"
+          value={scrub?.id === v.id ? scrub.pos : v.progress}
+          onpointerdown={() => (scrub = { id: v.id, pos: v.progress })}
+          oninput={(e) => {
+            const p = Number(e.currentTarget.value);
+            scrub = { id: v.id, pos: p };
+            seekVoice(v.id, p);
+          }}
+          onpointerup={() => (scrub = null)}
+          onchange={() => (scrub = null)}
+        />
+        <input
+          class="gain"
+          type="range"
+          min="0"
+          max="2"
+          step="0.01"
+          title="Volume"
+          value={gainEdit[v.id] ?? v.gain}
+          oninput={(e) => {
+            const g = Number(e.currentTarget.value);
+            gainEdit[v.id] = g;
+            setVoiceGain(v.id, g);
+          }}
+        />
         <button class="x" onclick={() => stopVoice(v.id)}><X size={12} /></button>
       </span>
     {/each}
@@ -735,8 +783,9 @@
     background: var(--panel-3); border-radius: 999px; padding: 3px 6px 3px 10px;
   }
   .now.mon { background: var(--accent-dim); }
-  .bar { width: 60px; height: 4px; background: var(--bg); border-radius: 2px; overflow: hidden; }
-  .bar i { display: block; height: 100%; background: var(--accent-2); }
+  .now .lbl { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .now input[type="range"] { width: 72px; flex: none; }
+  .now input.gain { width: 54px; flex: none; opacity: .85; }
   .toast { margin-left: auto; color: var(--ok); font-size: 12px; }
   .muted { color: var(--muted); font-size: 12px; }
 </style>

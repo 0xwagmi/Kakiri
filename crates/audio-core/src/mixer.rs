@@ -161,6 +161,17 @@ impl Mixer {
         }
     }
 
+    /// Jump a playing voice to `fraction` (0.0..1.0) of its length.
+    pub fn seek(&mut self, id: VoiceId, fraction: f32) {
+        for v in &mut self.voices {
+            if v.id == id && !v.pcm.is_empty() {
+                let len = v.pcm.len();
+                let f = fraction.clamp(0.0, 1.0);
+                v.pos = ((len as f32 * f) as usize).min(len - 1);
+            }
+        }
+    }
+
     pub fn active(&self) -> Vec<VoiceInfo> {
         self.voices
             .iter()

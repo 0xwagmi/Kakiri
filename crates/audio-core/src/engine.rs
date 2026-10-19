@@ -277,6 +277,10 @@ impl Engine {
         self.mixer.lock().unwrap().set_gain(id, gain);
     }
 
+    pub fn seek(&self, id: VoiceId, fraction: f32) {
+        self.mixer.lock().unwrap().seek(id, fraction);
+    }
+
     pub fn active(&self) -> Vec<VoiceInfo> {
         self.mixer.lock().unwrap().active()
     }

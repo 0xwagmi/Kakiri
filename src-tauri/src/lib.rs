@@ -397,6 +397,11 @@ fn set_voice_gain(state: tauri::State<'_, AppState>, id: u64, gain: f32) {
 }
 
 #[tauri::command]
+fn seek_voice(state: tauri::State<'_, AppState>, id: u64, position: f32) {
+    state.engine.seek(id, position);
+}
+
+#[tauri::command]
 fn active_voices(state: tauri::State<'_, AppState>) -> Vec<VoiceInfo> {
     state.engine.active()
 }
@@ -489,6 +494,7 @@ pub fn run() {
             stop_voice,
             stop_all,
             set_voice_gain,
+            seek_voice,
             active_voices,
             clear_cache,
             set_hotkeys,
