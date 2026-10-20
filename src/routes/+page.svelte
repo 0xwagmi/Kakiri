@@ -3,7 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import SoundCard from "$lib/SoundCard.svelte";
-  import catSvg from "../../static/cat.svg?raw";
+  import catSvg from "$lib/assets/cat.svg?raw";
   import Pads from "$lib/Pads.svelte";
   import Select from "$lib/Select.svelte";
   import Settings from "$lib/Settings.svelte";
