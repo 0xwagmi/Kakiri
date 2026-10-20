@@ -434,6 +434,32 @@ fn timeline_status(state: tauri::State<'_, AppState>) -> TimelineStatus {
     state.engine.timeline_status()
 }
 
+/// Drop a clip into the timeline that is already playing — no restart, and the
+/// sounds that are already sounding keep going.
+#[tauri::command]
+async fn timeline_add_clip(
+    state: tauri::State<'_, AppState>,
+    clip: Clip,
+) -> Result<TimelineStatus, String> {
+    let engine = state.engine.clone();
+    // Probing the file duration is I/O; keep it off the UI thread.
+    tauri::async_runtime::spawn_blocking(move || engine.timeline_add_clip(clip))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Take one clip out of the running timeline, silencing only that clip.
+#[tauri::command]
+fn timeline_remove_clip(state: tauri::State<'_, AppState>, id: String) -> TimelineStatus {
+    state.engine.timeline_remove_clip(&id)
+}
+
+/// Loop on/off while playing, without dropping the playhead.
+#[tauri::command]
+fn timeline_set_loop(state: tauri::State<'_, AppState>, looped: bool) {
+    state.engine.timeline_set_loop(looped);
+}
+
 /// Length of a clip list, so the UI can size the ruler without decoding.
 #[tauri::command]
 async fn timeline_length(
@@ -542,6 +568,9 @@ pub fn run() {
             timeline_stop,
             timeline_status,
             timeline_length,
+            timeline_add_clip,
+            timeline_remove_clip,
+            timeline_set_loop,
             clear_cache,
             set_hotkeys,
         ])

@@ -97,9 +97,17 @@ clicked mp3 in Discord" in under 5 minutes, with no terminal use.
   - `audio-core::timeline` runs a 4 ms scheduler over the existing mixer — no
     second audio path. `play_timeline(clips, looped, from)` supports scrubbing;
     a clip spanning the playhead resumes mid-file via `spawn_from`.
+  - **Editable while it plays**: the arrangement lives behind a mutex, so
+    adding/removing a clip or toggling loop does not restart playback —
+    `timeline_add_clip` / `timeline_remove_clip` / `timeline_set_loop`. Adding
+    a clip whose start is behind the playhead starts it part-way in; removing
+    one silences only that clip's voice.
   - Verified with synthetic tones: 1 s clip → silence gap → two overlapping
     clips (louder sum), loop wrap at the timeline length, and `from` resuming
-    two clips mid-way.
+    two clips mid-way. Mid-play add measured off the mic: 440 Hz clip keeps
+    playing across the add while 660 Hz joins (RMS 0.35 → 0.50, no dropout);
+    removing the added clip drops the voice count back to 1. A clip added at
+    start 3 s extended a 4 s timeline to 5 s and still ended correctly.
 - [ ] Tray menu: mute all, volume, quit; single-instance.
 - [ ] VU/peak meters (throttled `levels` events).
 - [x] Long-file streaming path (don't preload whole songs).

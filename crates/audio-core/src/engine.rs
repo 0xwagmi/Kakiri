@@ -379,6 +379,35 @@ impl Engine {
         Ok(status)
     }
 
+    /// Add a clip to the *running* timeline. Nothing restarts and no other
+    /// voice is cut, so sounds can be dropped in mid-call.
+    pub fn timeline_add_clip(
+        &self,
+        clip: crate::timeline::Clip,
+    ) -> Result<crate::timeline::TimelineStatus, String> {
+        let guard = self.timeline.lock().unwrap();
+        match guard.as_ref() {
+            Some(p) => p.add(clip),
+            None => Err("timeline is not playing".into()),
+        }
+    }
+
+    /// Remove one clip from the running timeline, silencing just its voice.
+    pub fn timeline_remove_clip(&self, id: &str) -> crate::timeline::TimelineStatus {
+        let guard = self.timeline.lock().unwrap();
+        match guard.as_ref() {
+            Some(p) => p.remove(id),
+            None => self.idle_timeline_status(),
+        }
+    }
+
+    /// Loop on/off without restarting the playhead.
+    pub fn timeline_set_loop(&self, looped: bool) {
+        if let Some(p) = self.timeline.lock().unwrap().as_ref() {
+            p.set_looped(looped);
+        }
+    }
+
     pub fn stop_timeline(&self) {
         if let Some(p) = self.timeline.lock().unwrap().take() {
             p.stop();
@@ -388,11 +417,15 @@ impl Engine {
     pub fn timeline_status(&self) -> crate::timeline::TimelineStatus {
         match self.timeline.lock().unwrap().as_ref() {
             Some(p) => p.status(),
-            None => crate::timeline::TimelineStatus {
-                playing: false,
-                position: 0.0,
-                length: 0.0,
-            },
+            None => self.idle_timeline_status(),
+        }
+    }
+
+    fn idle_timeline_status(&self) -> crate::timeline::TimelineStatus {
+        crate::timeline::TimelineStatus {
+            playing: false,
+            position: 0.0,
+            length: 0.0,
         }
     }
 }

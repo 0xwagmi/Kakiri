@@ -79,6 +79,15 @@ fn flag(args: &[String], name: &str) -> Option<String> {
         .cloned()
 }
 
+/// Every value given for a repeatable flag, in order.
+fn flags(args: &[String], name: &str) -> Vec<String> {
+    args.iter()
+        .enumerate()
+        .filter(|(_, a)| a.as_str() == name)
+        .filter_map(|(i, _)| args.get(i + 1).cloned())
+        .collect()
+}
+
 fn has_flag(args: &[String], name: &str) -> bool {
     args.iter().any(|a| a == name)
 }
@@ -315,7 +324,19 @@ fn cmd_timeline(args: &[String]) -> Result<()> {
     let from: f64 = flag(args, "--from").and_then(|v| v.parse().ok()).unwrap_or(0.0);
 
     let mut clips = Vec::new();
-    let takes_value = ["--target", "--seconds", "--gain", "--from", "--monitor", "--master"];
+    // --add <at>:<path>[@<start>] drops a clip in while the timeline plays,
+    // which is the thing being tested here.
+    let mut adds: Vec<(f64, Clip)> = Vec::new();
+    let takes_value = [
+        "--target",
+        "--seconds",
+        "--gain",
+        "--from",
+        "--monitor",
+        "--master",
+        "--add",
+        "--remove",
+    ];
     let mut skip = false;
     for (i, a) in args.iter().enumerate() {
         if skip {
@@ -339,8 +360,40 @@ fn cmd_timeline(args: &[String]) -> Result<()> {
             gain: 1.0,
         });
     }
+    for spec in flags(args, "--add") {
+        // <at>:<path>[@<start>]
+        let (at, rest) = spec
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("--add wants <at>:<path>[@<start>]"))?;
+        let at: f64 = at.parse()?;
+        let (path, start) = match rest.rsplit_once('@') {
+            Some((p, s)) => (p.to_string(), s.parse::<f64>().unwrap_or(0.0)),
+            None => (rest.to_string(), 0.0),
+        };
+        adds.push((
+            at,
+            Clip {
+                id: format!("add{}", adds.len()),
+                path,
+                track: adds.len() % 6,
+                start,
+                gain: 1.0,
+            },
+        ));
+    }
+    let removes: Vec<(f64, String)> = flags(args, "--remove")
+        .into_iter()
+        .filter_map(|spec| {
+            let (at, id) = spec.split_once(':')?;
+            Some((at.parse().ok()?, id.to_string()))
+        })
+        .collect();
+
     if clips.is_empty() {
-        anyhow::bail!("usage: spike-routing timeline <path@start>... [--seconds N] [--loop]");
+        anyhow::bail!(
+            "usage: spike-routing timeline <path@start>... [--seconds N] [--loop] \
+             [--add <at>:<path>[@<start>]] [--remove <at>:<id>]"
+        );
     }
 
     let fmt = BusFormat::default();
@@ -365,6 +418,8 @@ fn cmd_timeline(args: &[String]) -> Result<()> {
 
     let step = Duration::from_millis(500);
     let mut t = 0.0;
+    let mut applied_adds: std::collections::HashSet<String> = Default::default();
+    let mut applied: std::collections::HashSet<String> = Default::default();
     while t < seconds {
         std::thread::sleep(step);
         t += 0.5;
@@ -375,6 +430,22 @@ fn cmd_timeline(args: &[String]) -> Result<()> {
             st.playing,
             engine.active().len()
         );
+        // Live edits: drop clips in / take them out without stopping.
+        for (at, clip) in adds.clone() {
+            if at <= t && !applied_adds.contains(&clip.id) {
+                applied_adds.insert(clip.id.clone());
+                let path = clip.path.clone();
+                match engine.timeline_add_clip(clip) {
+                    Ok(st) => println!("  +add {path} at t={at}s -> length {:.2}s", st.length),
+                    Err(e) => println!("  +add {path} failed: {e}"),
+                }
+            }
+        }
+        for (at, id) in removes.clone() {
+            if at <= t && applied.insert(id.clone()) {
+                println!("  -remove {} -> length {:.2}s", id, engine.timeline_remove_clip(&id).length);
+            }
+        }
         if !st.playing {
             break;
         }

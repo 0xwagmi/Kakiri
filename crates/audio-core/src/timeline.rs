@@ -60,14 +60,104 @@ pub struct TimelineStatus {
 struct Shared {
     playing: AtomicBool,
     stop: AtomicBool,
+    /// Loop the timeline. Live, so toggling it never restarts playback.
+    looped: AtomicBool,
     /// Playhead in milliseconds (avoids f64 atomics).
     position: AtomicU64,
+    /// End of the last clip, in milliseconds.
     length: AtomicU64,
+}
+
+impl Shared {
+    fn set_length(&self, secs: f64) {
+        self.length.store((secs.max(0.0) * 1000.0) as u64, Ordering::Relaxed);
+    }
+}
+
+/// The clips a running player is playing.
+///
+/// This lives behind a mutex (rather than being owned by the scheduler thread)
+/// so writing to the timeline while it plays — adding a sound, deleting one,
+/// dragging one — does not need a restart. A restart would drop the playhead
+/// and cut every voice, which is exactly what you don't want mid-call.
+struct Arrangement {
+    clips: Vec<Clip>,
+    /// Durations probed once, so the scheduler never touches the filesystem.
+    durs: Vec<f64>,
+    /// Which clips this round has already started.
+    started: Vec<bool>,
+}
+
+impl Arrangement {
+    fn new(clips: Vec<Clip>, durs: Vec<f64>, from: f64) -> Self {
+        // Clips that already finished before `from` are skipped outright.
+        let started = clips
+            .iter()
+            .zip(&durs)
+            .map(|(c, d)| c.start + d <= from)
+            .collect();
+        Self {
+            clips,
+            durs,
+            started,
+        }
+    }
+
+    fn length(&self) -> f64 {
+        self.clips
+            .iter()
+            .zip(&self.durs)
+            .map(|(c, d)| c.start.max(0.0) + d.max(0.0))
+            .fold(0.0, f64::max)
+    }
+
+    fn index_of(&self, id: &str) -> Option<usize> {
+        self.clips.iter().position(|c| c.id == id)
+    }
+
+    /// Add or replace a clip, keeping the two vecs the same length.
+    fn put(&mut self, clip: Clip, dur: f64) {
+        match self.index_of(&clip.id) {
+            Some(i) => {
+                // Same id → keep `started`: a clip that is already sounding
+                // must not be started a second time by the replacement.
+                self.clips[i] = clip;
+                self.durs[i] = dur;
+            }
+            None => {
+                self.clips.push(clip);
+                self.durs.push(dur);
+                self.started.push(false);
+            }
+        }
+    }
+
+    fn take(&mut self, id: &str) -> bool {
+        match self.index_of(id) {
+            Some(i) => {
+                self.clips.remove(i);
+                self.durs.remove(i);
+                self.started.remove(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn restart_round(&mut self) {
+        for s in &mut self.started {
+            *s = false;
+        }
+    }
 }
 
 /// A running (or finished) timeline playback.
 pub struct Player {
     shared: Arc<Shared>,
+    arrangement: Arc<Mutex<Arrangement>>,
+    /// (clip id, voice id) so a removed clip can be silenced on its own.
+    voices: Arc<Mutex<Vec<(String, u64)>>>,
+    engine: Arc<Engine>,
     handle: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -86,6 +176,56 @@ impl Player {
         if let Some(h) = self.handle.lock().unwrap().take() {
             let _ = h.join();
         }
+    }
+
+    /// Add a clip mid-playback without disturbing the playhead or the voices
+    /// that are already sounding. A clip whose start is already behind the
+    /// playhead begins immediately, part-way in.
+    pub fn add(&self, clip: Clip) -> Result<TimelineStatus, String> {
+        if clip.start < 0.0 {
+            return Err("clip start must not be negative".into());
+        }
+        let dur = duration_of(&clip.path, &self.engine);
+        let len = {
+            let mut a = self.arrangement.lock().unwrap();
+            a.put(clip, dur);
+            a.length()
+        };
+        self.shared.set_length(len);
+        Ok(self.status())
+    }
+
+    /// Remove a clip mid-playback, silencing only that clip's voice.
+    pub fn remove(&self, id: &str) -> TimelineStatus {
+        let len = {
+            let mut a = self.arrangement.lock().unwrap();
+            if !a.take(id) {
+                return self.status();
+            }
+            a.length()
+        };
+        self.shared.set_length(len);
+        self.silence(id);
+        self.status()
+    }
+
+    /// Live loop toggle — no restart, the playhead keeps running.
+    pub fn set_looped(&self, looped: bool) {
+        self.shared.looped.store(looped, Ordering::Relaxed);
+    }
+
+    /// Stop the voices belonging to one clip, leaving the rest playing.
+    fn silence(&self, id: &str) {
+        let mut v = self.voices.lock().unwrap();
+        let mut kept = Vec::with_capacity(v.len());
+        for (clip_id, voice) in v.drain(..) {
+            if clip_id == id {
+                self.engine.stop(voice);
+            } else {
+                kept.push((clip_id, voice));
+            }
+        }
+        *v = kept;
     }
 }
 
@@ -125,74 +265,70 @@ pub fn play(
     looped: bool,
     from_secs: f64,
 ) -> Result<Player, String> {
+    let from = from_secs.max(0.0);
     let clips: Vec<Clip> = clips.into_iter().filter(|c| c.start >= 0.0).collect();
     // Probe each file once, up front: the scheduler must never block on I/O.
     let durs: Vec<f64> = clips.iter().map(|c| duration_of(&c.path, &engine)).collect();
-    let length = clips
-        .iter()
-        .zip(&durs)
-        .map(|(c, d)| c.start.max(0.0) + d.max(0.0))
-        .fold(0.0, f64::max);
+    let arrangement = Arc::new(Mutex::new(Arrangement::new(clips, durs, from)));
+    let length = arrangement.lock().unwrap().length();
 
     let shared = Arc::new(Shared {
         playing: AtomicBool::new(true),
         stop: AtomicBool::new(false),
-        position: AtomicU64::new((from_secs.max(0.0) * 1000.0) as u64),
+        looped: AtomicBool::new(looped),
+        position: AtomicU64::new((from * 1000.0) as u64),
         length: AtomicU64::new((length * 1000.0) as u64),
     });
 
+    let voices: Arc<Mutex<Vec<(String, u64)>>> = Arc::new(Mutex::new(Vec::new()));
     let sh = shared.clone();
+    let arr = arrangement.clone();
+    let vox = voices.clone();
+    let eng = engine.clone();
     let handle = thread::Builder::new()
         .name("timeline".into())
-        .spawn(move || run(engine, clips, durs, looped, length, from_secs.max(0.0), sh))
+        .spawn(move || run(eng, arr, vox, from, sh))
         .map_err(|e| format!("spawn timeline thread: {e}"))?;
 
     Ok(Player {
         shared,
+        arrangement,
+        voices,
+        engine,
         handle: Mutex::new(Some(handle)),
     })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run(
     engine: Arc<Engine>,
-    clips: Vec<Clip>,
-    durs: Vec<f64>,
-    looped: bool,
-    length: f64,
+    arr: Arc<Mutex<Arrangement>>,
+    voices: Arc<Mutex<Vec<(String, u64)>>>,
     from: f64,
     sh: Arc<Shared>,
 ) {
-    // Clips that already finished before `from` are skipped outright; a clip
-    // that *spans* `from` starts immediately, seeked into its middle.
-    let mut started: Vec<bool> = clips
-        .iter()
-        .zip(&durs)
-        .map(|(c, d)| c.start + d <= from)
-        .collect();
-    // Voices are started from short-lived threads so a slow file open can never
-    // stall the playhead; ids are collected here so stop() can kill them.
-    let voices: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
     // Round trips (wrapping) of the whole timeline.
     let mut round = 0u64;
-    // Shift the clock so the playhead begins at `from`.
-    let started_at = Instant::now() - Duration::from_secs_f64(from);
+    // Each round gets its own clock, so the playhead stays correct even when
+    // the arrangement grows mid-play and the loop length changes under it.
+    let mut round_start = Instant::now() - Duration::from_secs_f64(from);
 
     loop {
         if sh.stop.load(Ordering::Relaxed) {
             break;
         }
 
-        let elapsed = started_at.elapsed().as_secs_f64();
-        let mut pos = elapsed - round as f64 * length;
+        let length = sh.length.load(Ordering::Relaxed) as f64 / 1000.0;
+        let mut pos = round_start.elapsed().as_secs_f64();
+
         if length > 0.0 && pos >= length {
-            if looped {
+            if sh.looped.load(Ordering::Relaxed) {
                 round += 1;
-                pos = elapsed - round as f64 * length;
-                started.iter_mut().for_each(|s| *s = false);
+                round_start = Instant::now();
+                pos = 0.0;
+                arr.lock().unwrap().restart_round();
             } else {
-                sh.position
-                    .store((length * 1000.0) as u64, Ordering::Relaxed);
+                sh.set_length(length);
+                sh.position.store((length * 1000.0) as u64, Ordering::Relaxed);
                 sh.playing.store(false, Ordering::Relaxed);
                 break;
             }
@@ -200,51 +336,28 @@ fn run(
         sh.position
             .store((pos.max(0.0) * 1000.0) as u64, Ordering::Relaxed);
 
-        for (i, clip) in clips.iter().enumerate() {
-            if started[i] {
-                continue;
+        // Collect the clips that are due, then start them outside the lock so a
+        // slow file open can never stall the playhead.
+        let mut due: Vec<(Clip, f64, f64)> = Vec::new();
+        {
+            let mut a = arr.lock().unwrap();
+            for i in 0..a.clips.len() {
+                if a.started[i] || pos < a.clips[i].start {
+                    continue;
+                }
+                a.started[i] = true;
+                // Scrub support: if the playhead is already inside this clip,
+                // start it part-way through instead of from the top.
+                let skip = (pos - a.clips[i].start).max(0.0);
+                if skip >= a.durs[i] - 0.02 {
+                    continue; // entirely behind the playhead — nothing to hear
+                }
+                due.push((a.clips[i].clone(), skip, a.durs[i]));
             }
-            // Start slightly before the nominal time so the first samples are
-            // already flowing when the playhead crosses the clip.
-            if pos < clip.start {
-                continue;
-            }
-            started[i] = true;
-            let key = format!("{KEY_PREFIX}{round}:{}", clip.id);
-            // Scrub support: if the playhead is already inside this clip, start
-            // it part-way through instead of from the top.
-            let skip = (pos - clip.start).max(0.0);
-            // Mirror manual triggering: also play to the monitor if it's on, so
-            // you can hear the arrangement you're building.
-            let route = if engine.monitor_enabled() {
-                Route::Both
-            } else {
-                Route::Mic
-            };
-            let label = PathBuf::from(&clip.path)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("clip")
-                .to_string();
-            let path = PathBuf::from(&clip.path);
-            let gain = clip.gain;
-            let eng = engine.clone();
-            let ids = voices.clone();
-            let stop = sh.clone();
-            let spawned = thread::Builder::new()
-                .name("timeline-clip".into())
-                .spawn(move || {
-                    if stop.stop.load(Ordering::Relaxed) {
-                        return; // the timeline was stopped while we were starting
-                    }
-                    match eng.play_stream_from(key, label, path, gain, false, route, skip) {
-                        Ok(id) => ids.lock().unwrap().push(id),
-                        Err(e) => eprintln!("[timeline] {e}"),
-                    }
-                });
-            if spawned.is_err() {
-                eprintln!("[timeline] could not spawn clip thread");
-            }
+        }
+
+        for (clip, skip, dur) in due {
+            spawn_clip(&engine, &voices, &sh, round, clip, skip, dur);
         }
 
         thread::sleep(TICK);
@@ -252,10 +365,54 @@ fn run(
 
     // Stop only the voices this timeline started; anything the user triggered
     // by hand keeps playing.
-    for id in voices.lock().unwrap().drain(..) {
+    for (_, id) in voices.lock().unwrap().drain(..) {
         engine.stop(id);
     }
     sh.playing.store(false, Ordering::Relaxed);
+}
+
+fn spawn_clip(
+    engine: &Arc<Engine>,
+    voices: &Arc<Mutex<Vec<(String, u64)>>>,
+    sh: &Arc<Shared>,
+    round: u64,
+    clip: Clip,
+    skip: f64,
+    _dur: f64,
+) {
+    let key = format!("{KEY_PREFIX}{round}:{}", clip.id);
+    // Mirror manual triggering: also play to the monitor if it's on, so you can
+    // hear the arrangement you're building.
+    let route = if engine.monitor_enabled() {
+        Route::Both
+    } else {
+        Route::Mic
+    };
+    let label = PathBuf::from(&clip.path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("clip")
+        .to_string();
+    let path = PathBuf::from(&clip.path);
+    let gain = clip.gain;
+    let clip_id = clip.id;
+    let eng = engine.clone();
+    let ids = voices.clone();
+    let stop = sh.clone();
+    let spawned = thread::Builder::new()
+        .name("timeline-clip".into())
+        .spawn(move || {
+            if stop.stop.load(Ordering::Relaxed) {
+                return; // the timeline was stopped while we were starting
+            }
+            match eng.play_stream_from(key, label, path, gain, false, route, skip) {
+                Ok(id) => ids.lock().unwrap().push((clip_id, id)),
+                Err(e) => eprintln!("[timeline] {e}"),
+            }
+        });
+    if spawned.is_err() {
+        eprintln!("[timeline] could not spawn clip thread");
+    }
 }
 
 #[cfg(test)]
@@ -285,6 +442,51 @@ mod tests {
     #[test]
     fn empty_timeline_has_zero_length() {
         assert_eq!(length_with(&[], |_| 5.0), 0.0);
+    }
+
+    #[test]
+    fn adding_a_clip_keeps_the_arrangement_consistent() {
+        let mut a = Arrangement::new(vec![clip("a", 0.0)], vec![2.0], 0.0);
+        assert!((a.length() - 2.0).abs() < 1e-9);
+        a.put(clip("b", 3.0), 2.0);
+        // `durs` and `started` must grow with `clips` or the scheduler panics
+        assert_eq!(a.clips.len(), 2);
+        assert_eq!(a.durs.len(), 2);
+        assert_eq!(a.started.len(), 2);
+        assert!((a.length() - 5.0).abs() < 1e-9, "a longer clip extends the end");
+    }
+
+    #[test]
+    fn adding_an_existing_id_replaces_without_unstarting_it() {
+        let mut a = Arrangement::new(vec![clip("a", 0.0)], vec![2.0], 0.0);
+        a.started[0] = true;
+        let mut moved = clip("a", 4.0);
+        moved.gain = 0.5;
+        a.put(moved, 2.0);
+        assert_eq!(a.clips.len(), 1, "no duplicate clip");
+        assert!(a.started[0], "a clip that is already sounding stays started");
+        assert_eq!(a.clips[0].gain, 0.5);
+        assert!((a.length() - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn removing_a_clip_shrinks_the_length() {
+        let mut a = Arrangement::new(vec![clip("a", 0.0), clip("b", 5.0)], vec![2.0, 2.0], 0.0);
+        assert!((a.length() - 7.0).abs() < 1e-9);
+        assert!(a.take("b"));
+        assert_eq!(a.clips.len(), 1);
+        assert_eq!(a.durs.len(), 1);
+        assert_eq!(a.started.len(), 1);
+        assert!((a.length() - 2.0).abs() < 1e-9);
+        assert!(!a.take("nope"), "removing an unknown id is a no-op");
+    }
+
+    #[test]
+    fn restarted_round_starts_every_clip_again() {
+        let mut a = Arrangement::new(vec![clip("a", 0.0), clip("b", 1.0)], vec![2.0, 2.0], 0.0);
+        a.started.iter_mut().for_each(|s| *s = true);
+        a.restart_round();
+        assert!(a.started.iter().all(|s| !*s));
     }
 
     #[test]

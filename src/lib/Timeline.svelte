@@ -170,30 +170,42 @@
     return 0; // everything is busy → stack on the top track
   }
 
-  function addClip(s: Sound) {
+  async function addClip(s: Sound) {
     const start = snap(Math.max(position, 0));
     const dur = durOf(s);
-    clips = [
-      ...clips,
-      {
-        id: String(nextId++),
-        path: s.path,
-        name: label(s),
-        track: freeTrack(start, dur),
-        start,
-        dur,
-        gain: 1,
-      },
-    ];
+    const clip: Clip = {
+      id: String(nextId++),
+      path: s.path,
+      name: label(s),
+      track: freeTrack(start, dur),
+      start,
+      dur,
+      gain: 1,
+    };
+    clips = [...clips, clip];
     save();
-    syncIfPlaying();
+    // Drop it into the timeline that is already playing: nothing restarts and
+    // the sounds that are sounding right now keep going.
+    if (!playing) return;
+    try {
+      const st = await invoke<Status>("timeline_add_clip", { clip: payloadOf(clip) });
+      length = st.length;
+    } catch (e) {
+      flash(String(e));
+    }
   }
 
-  function removeClip(id: string) {
+  async function removeClip(id: string) {
     clips = clips.filter((c) => c.id !== id);
     if (selId === id) selId = null;
     save();
-    syncIfPlaying();
+    if (!playing) return;
+    try {
+      const st = await invoke<Status>("timeline_remove_clip", { id });
+      length = st.length;
+    } catch {
+      /* the timeline already stopped */
+    }
   }
 
   function clearAll() {
@@ -213,14 +225,16 @@
 
   // ---- transport -----------------------------------------------------------
 
+  const payloadOf = (c: Clip) => ({
+    id: c.id,
+    path: c.path,
+    track: c.track,
+    start: c.start,
+    gain: c.gain,
+  });
+
   function payload() {
-    return clips.map((c) => ({
-      id: c.id,
-      path: c.path,
-      track: c.track,
-      start: c.start,
-      gain: c.gain,
-    }));
+    return clips.map(payloadOf);
   }
 
   async function play() {
@@ -252,20 +266,6 @@
     playing = false;
     position = 0;
     stopPolling();
-  }
-
-  /** Re-start playback from the top so edits are heard without a manual stop. */
-  async function syncIfPlaying() {
-    if (!playing) return;
-    if (!clips.length) {
-      stop();
-      return;
-    }
-    try {
-      await invoke<Status>("timeline_play", { clips: payload(), looped });
-    } catch (e) {
-      flash(String(e));
-    }
   }
 
   function startPolling() {
@@ -304,7 +304,8 @@
   function toggleLoop() {
     looped = !looped;
     save();
-    syncIfPlaying();
+    // Live: the playhead keeps running, the loop just starts/stops wrapping.
+    if (playing) invoke("timeline_set_loop", { looped }).catch(() => {});
   }
 
   // ---- mouse ---------------------------------------------------------------
@@ -338,7 +339,14 @@
   }
 
   function onLaneUp() {
+    if (!drag) return;
+    const moved = clips.find((c) => c.id === drag!.id);
     drag = null;
+    if (moved && playing) {
+      // Replace in place: the player keeps the clip's started flag, so a clip
+      // that is already sounding is not triggered a second time.
+      invoke("timeline_add_clip", { clip: payloadOf(moved) }).catch(() => {});
+    }
   }
 
   async function scrub(ev: PointerEvent) {
