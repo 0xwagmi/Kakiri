@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import SoundCard from "$lib/SoundCard.svelte";
+  import catSvg from "../../static/cat.svg?raw";
   import Pads from "$lib/Pads.svelte";
   import Select from "$lib/Select.svelte";
   import Settings from "$lib/Settings.svelte";
@@ -716,7 +717,10 @@
 
         <h3>{selected.name} · {selected.sounds.length} sounds</h3>
         {#if !selected.sounds.length}
-          <p class="muted pad">No sounds directly in this folder — try a subfolder above.</p>
+          <div class="empty-state">
+            <div class="art">{@html catSvg}</div>
+            <p>No audio found!</p>
+          </div>
         {/if}
         <div class="grid">
           {#each selected.sounds as s (s.id)}
@@ -926,6 +930,18 @@
     grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   }
   .pad { padding: 4px 0; }
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 44px 0 36px;
+    color: var(--muted);
+  }
+  .empty-state .art { width: 108px; height: 108px; opacity: 0.55; }
+  .empty-state .art :global(svg) { width: 100%; height: 100%; display: block; }
+  .empty-state p { margin: 0; font-size: 13px; letter-spacing: 0.01em; }
 
   .nowbar {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
