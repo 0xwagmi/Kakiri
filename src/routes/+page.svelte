@@ -6,6 +6,7 @@
   import Pads from "$lib/Pads.svelte";
   import Select from "$lib/Select.svelte";
   import Settings from "$lib/Settings.svelte";
+  import Timeline from "$lib/Timeline.svelte";
   import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog, Volume2 } from "$lib/icons";
 
   type Sound = {
@@ -70,7 +71,7 @@
   let loop = false;
   let masterGain = 0.85;
   let search = "";
-  let view: "library" | "pads" | "settings" = "library";
+  let view: "library" | "pads" | "timeline" | "settings" = "library";
   let voices: Voice[] = [];
   let scrub: { id: number; pos: number } | null = null;
   let gainEdit: Record<number, number> = {};
@@ -521,6 +522,9 @@
         >Library</button
       >
       <button class="ghost" class:on={view === "pads"} onclick={() => (view = "pads")}>Pads</button>
+      <button class="ghost" class:on={view === "timeline"} onclick={() => (view = "timeline")}
+        >Timeline</button
+      >
       <button
         class="ghost"
         class:on={view === "settings"}
@@ -719,6 +723,8 @@
   </div>
   {:else if view === "pads"}
     <Pads sounds={allLibSounds} play={playPath} />
+  {:else if view === "timeline"}
+    <Timeline sounds={allLibSounds} />
   {:else}
     <Settings
       {theme}

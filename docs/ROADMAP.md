@@ -90,6 +90,16 @@ clicked mp3 in Discord" in under 5 minutes, with no terminal use.
 - [~] Search, categories/tabs, favorites; drag-and-drop import. (search +
   folder tabs yes; favorites/dnd not yet)
 - [x] Persist library, layout, settings (localStorage: roots, prefs, pads).
+- [x] **Timeline / arranger** — stack sounds as clips on 6 tracks, drag to move,
+  drag between tracks, click the ruler to scrub, loop, zoom. Overlapping clips
+  mix (they start normal voices), so a jingle + a bed can be layered. Clips and
+  zoom persist in `localStorage`.
+  - `audio-core::timeline` runs a 4 ms scheduler over the existing mixer — no
+    second audio path. `play_timeline(clips, looped, from)` supports scrubbing;
+    a clip spanning the playhead resumes mid-file via `spawn_from`.
+  - Verified with synthetic tones: 1 s clip → silence gap → two overlapping
+    clips (louder sum), loop wrap at the timeline length, and `from` resuming
+    two clips mid-way.
 - [ ] Tray menu: mute all, volume, quit; single-instance.
 - [ ] VU/peak meters (throttled `levels` events).
 - [x] Long-file streaming path (don't preload whole songs).

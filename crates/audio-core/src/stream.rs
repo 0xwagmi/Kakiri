@@ -71,6 +71,11 @@ impl StreamVoice {
         self.control.total.load(Ordering::Relaxed)
     }
 
+    /// Frames consumed so far since the voice started (source frames).
+    pub fn played_frames(&self) -> u64 {
+        self.control.played.load(Ordering::Relaxed)
+    }
+
     pub fn progress(&self) -> f32 {
         let total = self.control.total.load(Ordering::Relaxed);
         if total == 0 {
@@ -103,8 +108,32 @@ impl Drop for StreamVoice {
 
 /// Open `path`, start a decoder thread, and return a voice to mix.
 pub fn spawn(path: PathBuf, fmt: BusFormat, looped: bool) -> Result<StreamVoice> {
-    let decoder = StreamDecoder::open(&path, fmt)?;
+    spawn_from(path, fmt, looped, 0.0)
+}
+
+/// Like [`spawn`], but begins `skip_secs` into the file.
+///
+/// The seek happens *before* the decoder thread starts producing, so playback
+/// begins exactly at the requested position with no audible jump. Used by the
+/// timeline when you scrub into the middle of a clip.
+pub fn spawn_from(
+    path: PathBuf,
+    fmt: BusFormat,
+    looped: bool,
+    skip_secs: f64,
+) -> Result<StreamVoice> {
+    let mut decoder = StreamDecoder::open(&path, fmt)?;
     let total = decoder.total_frames();
+    let mut played = 0u64;
+    if skip_secs > 0.0 && total > 0 {
+        let dur = decoder.duration_secs() as f64;
+        let target = ((skip_secs.min(dur) / dur.max(1e-9)) * total as f64) as u64;
+        if target > 0 && target < total {
+            if decoder.seek(target).is_ok() {
+                played = target;
+            }
+        }
+    }
     let (producer, consumer) = RingBuffer::<f32>::new(RING_SECONDS * fmt.rate as usize * fmt.channels as usize);
     let control = Arc::new(StreamControl {
         stop: AtomicBool::new(false),
@@ -112,7 +141,7 @@ pub fn spawn(path: PathBuf, fmt: BusFormat, looped: bool) -> Result<StreamVoice>
         generation: AtomicU64::new(0),
         applied: AtomicU64::new(0),
         looped: AtomicBool::new(looped),
-        played: AtomicU64::new(0),
+        played: AtomicU64::new(played),
         total: AtomicU64::new(total),
         eof: AtomicBool::new(false),
     });

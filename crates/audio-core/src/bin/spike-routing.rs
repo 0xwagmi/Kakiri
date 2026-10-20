@@ -294,6 +294,79 @@ fn cmd_stream(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `timeline <path@start>...  [--seconds N] [--loop] [--target X]`
+/// e.g. timeline a.wav@0 b.wav@2.5
+fn cmd_timeline(args: &[String]) -> Result<()> {
+    use audio_core::timeline::{self, Clip};
+
+    let target = flag(args, "--target").unwrap_or_else(|| MIC_SINK.to_string());
+    let seconds: f64 = flag(args, "--seconds").and_then(|v| v.parse().ok()).unwrap_or(8.0);
+    let looped = args.iter().any(|a| a == "--loop");
+    let from: f64 = flag(args, "--from").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+
+    let mut clips = Vec::new();
+    let takes_value = ["--target", "--seconds", "--gain", "--from"];
+    let mut skip = false;
+    for (i, a) in args.iter().enumerate() {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if a.starts_with("--") {
+            skip = takes_value.contains(&a.as_str());
+            continue;
+        }
+        let _ = i;
+        let (path, start) = match a.rsplit_once('@') {
+            Some((p, s)) => (p.to_string(), s.parse::<f64>().unwrap_or(0.0)),
+            None => (a.clone(), 0.0),
+        };
+        clips.push(Clip {
+            id: i.to_string(),
+            path,
+            track: i,
+            start,
+            gain: 1.0,
+        });
+    }
+    if clips.is_empty() {
+        anyhow::bail!("usage: spike-routing timeline <path@start>... [--seconds N] [--loop]");
+    }
+
+    let fmt = BusFormat::default();
+    let engine = Engine::new(fmt, make_output(target.clone(), fmt));
+    println!(
+        "length = {:.2}s for {} clip(s)",
+        timeline::length_of(&clips, &engine),
+        clips.len()
+    );
+
+    engine
+        .play_timeline(clips, looped, from)
+        .map_err(anyhow::Error::msg)?;
+
+    let step = Duration::from_millis(500);
+    let mut t = 0.0;
+    while t < seconds {
+        std::thread::sleep(step);
+        t += 0.5;
+        let st = engine.timeline_status();
+        println!(
+            "t={t:4.1}s  pos={:.2}s  playing={}  voices={}",
+            st.position,
+            st.playing,
+            engine.active().len()
+        );
+        if !st.playing {
+            break;
+        }
+    }
+    engine.stop_timeline();
+    std::thread::sleep(Duration::from_millis(200));
+    println!("done.");
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn cmd_mic(action: &str) -> Result<()> {
     use audio_core::virtualmic;
@@ -358,6 +431,7 @@ fn main() -> Result<()> {
         Some("passthrough") => cmd_passthrough(&args[1..]),
         Some("native") => cmd_native(&args[1..]),
         Some("stream") => cmd_stream(&args[1..]),
+        Some("timeline") => cmd_timeline(&args[1..]),
         Some("meta") => cmd_meta(&args[1..]),
         #[cfg(target_os = "linux")]
         Some("mic") => cmd_mic(args.get(1).map(String::as_str).unwrap_or("")),

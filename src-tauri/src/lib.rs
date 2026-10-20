@@ -15,6 +15,7 @@ use audio_core::input::AudioInput;
 use audio_core::library::Folder;
 use audio_core::mixer::{Retrigger, Route, VoiceInfo};
 use audio_core::output::AudioOutput;
+use audio_core::timeline::{Clip, TimelineStatus};
 use audio_core::virtualmic::{self, VirtualMic as MicStatus};
 
 #[derive(Clone)]
@@ -399,6 +400,50 @@ fn active_voices(state: tauri::State<'_, AppState>) -> Vec<VoiceInfo> {
     state.engine.active()
 }
 
+// ---------------------------------------------------------------------------
+// Timeline / arranger
+// ---------------------------------------------------------------------------
+
+/// Play a set of clips on the timeline. Clips overlapping in time are mixed.
+#[tauri::command]
+async fn timeline_play(
+    state: tauri::State<'_, AppState>,
+    clips: Vec<Clip>,
+    looped: Option<bool>,
+    from: Option<f64>,
+) -> Result<TimelineStatus, String> {
+    let engine = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        engine
+            .play_timeline(clips, looped.unwrap_or(false), from.unwrap_or(0.0))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn timeline_stop(state: tauri::State<'_, AppState>) {
+    state.engine.stop_timeline();
+}
+
+#[tauri::command]
+fn timeline_status(state: tauri::State<'_, AppState>) -> TimelineStatus {
+    state.engine.timeline_status()
+}
+
+/// Length of a clip list, so the UI can size the ruler without decoding.
+#[tauri::command]
+async fn timeline_length(
+    state: tauri::State<'_, AppState>,
+    clips: Vec<Clip>,
+) -> Result<f64, String> {
+    let engine = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || engine.timeline_length(&clips))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn clear_cache(state: tauri::State<'_, AppState>) {
     state.art_cache.lock().unwrap().clear();
@@ -491,6 +536,10 @@ pub fn run() {
             seek_voice,
             set_master_gain,
             active_voices,
+            timeline_play,
+            timeline_stop,
+            timeline_status,
+            timeline_length,
             clear_cache,
             set_hotkeys,
         ])

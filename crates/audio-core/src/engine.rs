@@ -69,6 +69,8 @@ pub struct Engine {
     next_id: AtomicU64,
     writer: Mutex<Option<JoinHandle<()>>>,
     reader: Mutex<Option<JoinHandle<()>>>,
+    /// The timeline currently playing, if any.
+    timeline: Mutex<Option<crate::timeline::Player>>,
 }
 
 impl Engine {
@@ -88,6 +90,7 @@ impl Engine {
             next_id: AtomicU64::new(1),
             writer: Mutex::new(None),
             reader: Mutex::new(None),
+            timeline: Mutex::new(None),
         });
         engine.clone().spawn_writer();
         engine.clone().spawn_reader();
@@ -276,6 +279,27 @@ impl Engine {
         Ok(id)
     }
 
+    /// Start a streaming voice that begins `skip_secs` into the file.
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_stream_from(
+        &self,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        path: std::path::PathBuf,
+        gain: f32,
+        looped: bool,
+        route: Route,
+        skip_secs: f64,
+    ) -> Result<VoiceId> {
+        let voice = crate::stream::spawn_from(path, self.format, looped, skip_secs)?;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.mixer
+            .lock()
+            .unwrap()
+            .add_stream(id, key.into(), label.into(), voice, gain, looped, route);
+        Ok(id)
+    }
+
     /// Stop every voice started with this key (for choke/toggle retrigger).
     pub fn stop_key(&self, key: &str) {
         self.mixer.lock().unwrap().stop_key(key);
@@ -308,11 +332,49 @@ impl Engine {
     pub fn active(&self) -> Vec<VoiceInfo> {
         self.mixer.lock().unwrap().active()
     }
+
+    /// Total length (seconds) of a set of timeline clips.
+    pub fn timeline_length(&self, clips: &[crate::timeline::Clip]) -> f64 {
+        crate::timeline::length_of(clips, self)
+    }
+
+    /// Replace any running timeline with `clips` and start it.
+    pub fn play_timeline(
+        self: &Arc<Self>,
+        clips: Vec<crate::timeline::Clip>,
+        looped: bool,
+        from_secs: f64,
+    ) -> Result<crate::timeline::TimelineStatus> {
+        self.stop_timeline();
+        let player = crate::timeline::play(self.clone(), clips, looped, from_secs.max(0.0))
+            .map_err(anyhow::Error::msg)?;
+        let status = player.status();
+        *self.timeline.lock().unwrap() = Some(player);
+        Ok(status)
+    }
+
+    pub fn stop_timeline(&self) {
+        if let Some(p) = self.timeline.lock().unwrap().take() {
+            p.stop();
+        }
+    }
+
+    pub fn timeline_status(&self) -> crate::timeline::TimelineStatus {
+        match self.timeline.lock().unwrap().as_ref() {
+            Some(p) => p.status(),
+            None => crate::timeline::TimelineStatus {
+                playing: false,
+                position: 0.0,
+                length: 0.0,
+            },
+        }
+    }
 }
 
 impl Drop for Engine {
     fn drop(&mut self) {
         self.running.store(false, Ordering::Relaxed);
+        self.stop_timeline();
         if let Some(mut input) = self.input.lock().unwrap().input.take() {
             input.stop();
         }
