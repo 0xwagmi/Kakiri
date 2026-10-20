@@ -519,7 +519,7 @@
     <div class="brand">
       <img class="logo" src="/icon.png" alt="Kakiri" />
       <div class="titles">
-        <strong>Kakiri Soundboard</strong>
+        <strong>Kakiri</strong>
         <span class="sub">{mic?.present ? mic.source : "no virtual mic"}</span>
       </div>
       <span class="dot" class:ok={mic?.present}></span>
