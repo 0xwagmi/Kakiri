@@ -276,6 +276,12 @@ fn cmd_stream(args: &[String]) -> Result<()> {
 
     let fmt = BusFormat::default();
     let engine = Engine::new(fmt, make_output(target.clone(), fmt));
+    let route = if let Some(mon) = flag(args, "--monitor") {
+        engine.set_monitor(Some(make_output(mon, fmt)))?;
+        audio_core::mixer::Route::Both
+    } else {
+        audio_core::mixer::Route::Mic
+    };
     let t0 = Instant::now();
     let id = engine.play_stream(
         path.clone(),
@@ -283,7 +289,7 @@ fn cmd_stream(args: &[String]) -> Result<()> {
         std::path::PathBuf::from(&path),
         gain,
         false,
-        audio_core::mixer::Route::Mic,
+        route,
     )?;
     println!("play_stream -> voice {id} in {:?}", t0.elapsed());
     std::thread::sleep(Duration::from_secs(seconds));
@@ -305,7 +311,7 @@ fn cmd_timeline(args: &[String]) -> Result<()> {
     let from: f64 = flag(args, "--from").and_then(|v| v.parse().ok()).unwrap_or(0.0);
 
     let mut clips = Vec::new();
-    let takes_value = ["--target", "--seconds", "--gain", "--from"];
+    let takes_value = ["--target", "--seconds", "--gain", "--from", "--monitor"];
     let mut skip = false;
     for (i, a) in args.iter().enumerate() {
         if skip {
@@ -335,6 +341,10 @@ fn cmd_timeline(args: &[String]) -> Result<()> {
 
     let fmt = BusFormat::default();
     let engine = Engine::new(fmt, make_output(target.clone(), fmt));
+    if let Some(mon) = flag(args, "--monitor") {
+        engine.set_monitor(Some(make_output(mon.clone(), fmt)))?;
+        println!("monitor -> {mon}");
+    }
     println!(
         "length = {:.2}s for {} clip(s)",
         timeline::length_of(&clips, &engine),

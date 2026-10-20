@@ -118,10 +118,6 @@ fn duration_of(path: &str, engine: &Engine) -> f64 {
     }
 }
 
-fn clip_len(engine: &Engine, c: &Clip) -> f64 {
-    duration_of(&c.path, engine)
-}
-
 /// Start playing `clips`, looping if `looped`.
 pub fn play(
     engine: Arc<Engine>,
@@ -130,7 +126,13 @@ pub fn play(
     from_secs: f64,
 ) -> Result<Player, String> {
     let clips: Vec<Clip> = clips.into_iter().filter(|c| c.start >= 0.0).collect();
-    let length = length_with(&clips, |p| duration_of(p, &engine));
+    // Probe each file once, up front: the scheduler must never block on I/O.
+    let durs: Vec<f64> = clips.iter().map(|c| duration_of(&c.path, &engine)).collect();
+    let length = clips
+        .iter()
+        .zip(&durs)
+        .map(|(c, d)| c.start.max(0.0) + d.max(0.0))
+        .fold(0.0, f64::max);
 
     let shared = Arc::new(Shared {
         playing: AtomicBool::new(true),
@@ -142,7 +144,7 @@ pub fn play(
     let sh = shared.clone();
     let handle = thread::Builder::new()
         .name("timeline".into())
-        .spawn(move || run(engine, clips, looped, length, from_secs.max(0.0), sh))
+        .spawn(move || run(engine, clips, durs, looped, length, from_secs.max(0.0), sh))
         .map_err(|e| format!("spawn timeline thread: {e}"))?;
 
     Ok(Player {
@@ -151,9 +153,11 @@ pub fn play(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run(
     engine: Arc<Engine>,
     clips: Vec<Clip>,
+    durs: Vec<f64>,
     looped: bool,
     length: f64,
     from: f64,
@@ -163,9 +167,12 @@ fn run(
     // that *spans* `from` starts immediately, seeked into its middle.
     let mut started: Vec<bool> = clips
         .iter()
-        .map(|c| c.start + clip_len(&engine, c) <= from)
+        .zip(&durs)
+        .map(|(c, d)| c.start + d <= from)
         .collect();
-    let mut voices: Vec<u64> = Vec::new();
+    // Voices are started from short-lived threads so a slow file open can never
+    // stall the playhead; ids are collected here so stop() can kill them.
+    let voices: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
     // Round trips (wrapping) of the whole timeline.
     let mut round = 0u64;
     // Shift the clock so the playhead begins at `from`.
@@ -207,23 +214,36 @@ fn run(
             // Scrub support: if the playhead is already inside this clip, start
             // it part-way through instead of from the top.
             let skip = (pos - clip.start).max(0.0);
-            match engine.play_stream_from(
-                key,
-                PathBuf::from(&clip.path)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("clip")
-                    .to_string(),
-                PathBuf::from(&clip.path),
-                clip.gain,
-                false,
-                // Mirror manual triggering: also play to the monitor if it's on,
-                // so you can hear the arrangement you're building.
-                if engine.monitor_enabled() { Route::Both } else { Route::Mic },
-                skip,
-            ) {
-                Ok(id) => voices.push(id),
-                Err(e) => eprintln!("[timeline] {}: {e}", clip.path),
+            // Mirror manual triggering: also play to the monitor if it's on, so
+            // you can hear the arrangement you're building.
+            let route = if engine.monitor_enabled() {
+                Route::Both
+            } else {
+                Route::Mic
+            };
+            let label = PathBuf::from(&clip.path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("clip")
+                .to_string();
+            let path = PathBuf::from(&clip.path);
+            let gain = clip.gain;
+            let eng = engine.clone();
+            let ids = voices.clone();
+            let stop = sh.clone();
+            let spawned = thread::Builder::new()
+                .name("timeline-clip".into())
+                .spawn(move || {
+                    if stop.stop.load(Ordering::Relaxed) {
+                        return; // the timeline was stopped while we were starting
+                    }
+                    match eng.play_stream_from(key, label, path, gain, false, route, skip) {
+                        Ok(id) => ids.lock().unwrap().push(id),
+                        Err(e) => eprintln!("[timeline] {e}"),
+                    }
+                });
+            if spawned.is_err() {
+                eprintln!("[timeline] could not spawn clip thread");
             }
         }
 
@@ -232,7 +252,7 @@ fn run(
 
     // Stop only the voices this timeline started; anything the user triggered
     // by hand keeps playing.
-    for id in voices {
+    for id in voices.lock().unwrap().drain(..) {
         engine.stop(id);
     }
     sh.playing.store(false, Ordering::Relaxed);

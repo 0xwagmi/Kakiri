@@ -57,11 +57,24 @@ struct InputSlot {
     input: Option<Box<dyn AudioInput>>,
 }
 
+/// A replacement output handed to the writer thread.
+///
+/// Outputs are *owned* by the audio writer rather than shared behind a mutex:
+/// `push()` paces itself to realtime and blocks when the ring is full, so
+/// holding a lock across it would stall every other thread (that is exactly how
+/// the timeline scheduler used to freeze when the monitor was on).
+enum OutputSwap {
+    Mic(Box<dyn AudioOutput>),
+    Monitor(Option<Box<dyn AudioOutput>>),
+}
+
 pub struct Engine {
     format: BusFormat,
     mixer: Arc<Mutex<Mixer>>,
-    mic: Arc<Mutex<Box<dyn AudioOutput>>>,
-    monitor: Arc<Mutex<Option<Box<dyn AudioOutput>>>>,
+    /// Channel to the writer thread for swapping outputs.
+    outputs_tx: std::sync::mpsc::Sender<OutputSwap>,
+    /// Whether a monitor output is active (read without blocking).
+    monitor_on: Arc<AtomicBool>,
     input: Arc<Mutex<InputSlot>>,
     input_ring: Arc<Mutex<InputRing>>,
     input_gain: Arc<AtomicU32>,
@@ -78,11 +91,12 @@ impl Engine {
         if let Err(e) = mic.start() {
             eprintln!("[engine] mic output start failed: {e}");
         }
+        let (outputs_tx, outputs_rx) = std::sync::mpsc::channel();
         let engine = Arc::new(Self {
             format,
             mixer: Arc::new(Mutex::new(Mixer::new(format.channels))),
-            mic: Arc::new(Mutex::new(mic)),
-            monitor: Arc::new(Mutex::new(None)),
+            outputs_tx,
+            monitor_on: Arc::new(AtomicBool::new(false)),
             input: Arc::new(Mutex::new(InputSlot { input: None })),
             input_ring: Arc::new(Mutex::new(InputRing::new(format.channels as usize))),
             input_gain: Arc::new(AtomicU32::new(1.0f32.to_bits())),
@@ -92,7 +106,7 @@ impl Engine {
             reader: Mutex::new(None),
             timeline: Mutex::new(None),
         });
-        engine.clone().spawn_writer();
+        engine.clone().spawn_writer(mic, outputs_rx);
         engine.clone().spawn_reader();
         engine
     }
@@ -101,11 +115,13 @@ impl Engine {
         self.format
     }
 
-    fn spawn_writer(self: Arc<Self>) {
+    fn spawn_writer(
+        self: Arc<Self>,
+        mic: Box<dyn AudioOutput>,
+        outputs_rx: std::sync::mpsc::Receiver<OutputSwap>,
+    ) {
         let block = BLOCK_FRAMES * self.format.channels as usize;
         let mixer = self.mixer.clone();
-        let mic = self.mic.clone();
-        let monitor = self.monitor.clone();
         let ring = self.input_ring.clone();
         let gain = self.input_gain.clone();
         let running = self.running.clone();
@@ -113,14 +129,23 @@ impl Engine {
         let handle = thread::Builder::new()
             .name("audio-writer".into())
             .spawn(move || {
+                // Owned here: nothing else locks these, so a blocking push()
+                // can never stall another thread.
+                let mut mic_out = mic;
+                let mut mon_out: Option<Box<dyn AudioOutput>> = None;
                 let mut mic_buf = vec![0f32; block];
                 let mut mon_buf = vec![0f32; block];
                 while running.load(Ordering::Relaxed) {
-                    let mut mon_guard = monitor.lock().unwrap();
-                    let has_mon = mon_guard.is_some();
+                    // Swap in outputs requested by set_output/set_monitor.
+                    while let Ok(swap) = outputs_rx.try_recv() {
+                        match swap {
+                            OutputSwap::Mic(o) => mic_out = o,
+                            OutputSwap::Monitor(o) => mon_out = o,
+                        }
+                    }
                     {
                         let mut mx = mixer.lock().unwrap();
-                        let mon_slice = if has_mon {
+                        let mon_slice = if mon_out.is_some() {
                             Some(mon_buf.as_mut_slice())
                         } else {
                             None
@@ -135,14 +160,10 @@ impl Engine {
                     }
                     mixer::soft_limit(&mut mic_buf);
 
-                    let mic_failed = {
-                        let mut out = mic.lock().unwrap();
-                        out.push(&mic_buf).is_err()
-                    };
-                    if let Some(m) = mon_guard.as_mut() {
+                    let mic_failed = mic_out.push(&mic_buf).is_err();
+                    if let Some(m) = mon_out.as_mut() {
                         let _ = m.push(&mon_buf);
                     }
-                    drop(mon_guard);
                     if mic_failed {
                         thread::sleep(Duration::from_millis(20));
                     }
@@ -188,14 +209,13 @@ impl Engine {
         *self.reader.lock().unwrap() = Some(handle);
     }
 
-    /// Swap the virtual-mic output. Starts the new one, then drops (stops) the old.
+    /// Swap the virtual-mic output. Starts the new one; the writer thread
+    /// installs it (and drops the old) on its next block.
     pub fn set_output(&self, mut output: Box<dyn AudioOutput>) -> Result<()> {
         output.start()?;
-        let old = {
-            let mut guard = self.mic.lock().unwrap();
-            std::mem::replace(&mut *guard, output)
-        };
-        drop(old);
+        self.outputs_tx
+            .send(OutputSwap::Mic(output))
+            .map_err(|_| anyhow::anyhow!("audio writer stopped"))?;
         Ok(())
     }
 
@@ -204,16 +224,17 @@ impl Engine {
         if let Some(o) = output.as_mut() {
             o.start()?;
         }
-        let old = {
-            let mut guard = self.monitor.lock().unwrap();
-            std::mem::replace(&mut *guard, output)
-        };
-        drop(old);
+        self.monitor_on
+            .store(output.is_some(), Ordering::Relaxed);
+        self.outputs_tx
+            .send(OutputSwap::Monitor(output))
+            .map_err(|_| anyhow::anyhow!("audio writer stopped"))?;
         Ok(())
     }
 
+    /// Non-blocking: safe to call from the timeline scheduler.
     pub fn monitor_enabled(&self) -> bool {
-        self.monitor.lock().unwrap().is_some()
+        self.monitor_on.load(Ordering::Relaxed)
     }
 
     /// Enable/replace (`Some`) or disable (`None`) the live voice input.
@@ -399,6 +420,28 @@ mod tests {
         ring.mix_into(&mut out, 0.5);
         assert!((out[0] - 0.35).abs() < 1e-6);
         assert_eq!(ring.buf.len(), 0);
+    }
+
+    /// The monitor flag must be readable without touching the writer thread:
+    /// the timeline scheduler reads it while a blocking `push()` may be in
+    /// flight (holding a lock there used to freeze the scheduler).
+    #[test]
+    fn monitor_flag_tracks_set_monitor() {
+        use crate::bus::BusFormat;
+        use crate::output::NullOutput;
+
+        let engine = Engine::new(BusFormat::default(), Box::new(NullOutput));
+        assert!(!engine.monitor_enabled());
+        engine
+            .set_monitor(Some(Box::new(NullOutput)))
+            .expect("set monitor");
+        assert!(engine.monitor_enabled());
+        // reading it repeatedly while the writer runs must not block
+        for _ in 0..10_000 {
+            assert!(engine.monitor_enabled());
+        }
+        engine.set_monitor(None).expect("clear monitor");
+        assert!(!engine.monitor_enabled());
     }
 
     #[test]
