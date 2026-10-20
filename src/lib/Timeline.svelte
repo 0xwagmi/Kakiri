@@ -29,6 +29,14 @@
   const SNAP = 0.1; // seconds
   const MIN_LEN = 1; // seconds of empty timeline to keep usable
   const LS = storageKey;
+  const MIN_PPS = 2; // ≈ 7 minutes across a wide window
+  const MAX_PPS = 400;
+
+  const clampPps = (v: number) => Math.min(MAX_PPS, Math.max(MIN_PPS, v));
+  // The zoom slider is logarithmic: low end (whole songs) gets as much travel
+  // as the high end (millisecond nudging), otherwise it is unusable.
+  const ppsFromSlider = (v: number) => clampPps(MIN_PPS * Math.pow(MAX_PPS / MIN_PPS, v / 1000));
+  const sliderFromPps = (p: number) => (1000 * Math.log(p / MIN_PPS)) / Math.log(MAX_PPS / MIN_PPS);
 
   let clips: Clip[] = [];
   let looped = false;
@@ -59,7 +67,67 @@
   /** Visible span: always covers the whole lane, so you can click anywhere. */
   $: need = Math.max(contentEnd + 4, laneW / pps + 2);
   $: span = Math.max(12, Math.ceil(need / 5) * 5);
-  $: ruler = Array.from({ length: Math.floor(span) + 1 }, (_, i) => i);
+
+  // Tick spacing adapts to the zoom so labels never collide and lines stay
+  // useful: the smallest step that still leaves room for a label wins.
+  const STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800];
+  // NOTE: keep `pps` visible in the block — Svelte only tracks identifiers it
+  // can see, so reading it inside a helper would leave the ruler stale.
+  let majorStep = 5;
+  let minorStep = 1;
+  $: {
+    const p = pps;
+    const major = STEPS.find((st) => st * p >= 56) ?? 1800;
+    const minor = STEPS.find((st) => st * p >= 9) ?? 1800;
+    majorStep = major;
+    minorStep = Math.min(major, minor);
+  }
+  $: ticks = buildTicks(span, minorStep, majorStep);
+
+  function buildTicks(end: number, minor: number, major: number) {
+    const out: { t: number; major: boolean }[] = [];
+    const n = Math.min(4000, Math.floor(end / minor) + 1);
+    for (let i = 0; i < n; i++) {
+      const t = Math.round(i * minor * 1000) / 1000;
+      out.push({ t, major: Math.abs(t / major - Math.round(t / major)) < 1e-6 });
+    }
+    return out;
+  }
+
+  /** 0:05 / 1:30 / 12:00 for minutes, 5s or 0.5 for the fine zoom. */
+  function fmtTime(t: number, step: number) {
+    if (step < 1) return t.toFixed(1);
+    const m = Math.floor(t / 60);
+    const sec = Math.round(t % 60);
+    return m > 0 ? `${m}:${String(sec).padStart(2, "0")}` : `${sec}s`;
+  }
+
+  /** 1:23.4 for the transport (minutes are easier to read than 500s). */
+  function fmtClock(t: number) {
+    const m = Math.floor(t / 60);
+    const sec = t % 60;
+    return m > 0 ? `${m}:${sec.toFixed(1).padStart(4, "0")}` : `${t.toFixed(1)}s`;
+  }
+
+  /** Zoom so the whole timeline fits the lane (3-minute songs, no scrolling). */
+  function fit() {
+    const end = Math.max(contentEnd, 4);
+    pps = clampPps((laneW - 12) / end);
+    save();
+  }
+
+  function onWheel(ev: WheelEvent) {
+    if (!(ev.ctrlKey || ev.metaKey)) return;
+    ev.preventDefault();
+    const rect = laneEl.getBoundingClientRect();
+    const at = (ev.clientX - rect.left + laneEl.scrollLeft) / pps;
+    pps = clampPps(pps * Math.exp(-ev.deltaY * 0.0025));
+    save();
+    // keep the time under the cursor pinned while zooming
+    requestAnimationFrame(() => {
+      laneEl.scrollLeft = Math.max(0, at * pps - (ev.clientX - rect.left));
+    });
+  }
 
   function flash(msg: string) {
     toast = msg;
@@ -78,7 +146,7 @@
         nextId = clips.reduce((m, c) => Math.max(m, Number(c.id) || 0), 0) + 1;
       }
       if (typeof data.looped === "boolean") looped = data.looped;
-      if (typeof data.pps === "number") pps = data.pps;
+      if (typeof data.pps === "number") pps = clampPps(data.pps);
     } catch {
       /* ignore corrupt local state */
     }
@@ -207,6 +275,7 @@
         const st = await invoke<Status>("timeline_status");
         position = st.position;
         length = st.length;
+        followPlayhead(st.position);
         if (!st.playing) {
           playing = false;
           stopPolling();
@@ -215,6 +284,16 @@
         stopPolling();
       }
     }, 60);
+  }
+
+  /** Keep the playhead on screen — a 3-minute clip scrolls far out of view. */
+  function followPlayhead(pos: number) {
+    const px = pos * pps;
+    const left = laneEl.scrollLeft;
+    const right = left + laneEl.clientWidth;
+    if (px < left || px > right - 24) {
+      laneEl.scrollLeft = Math.max(0, px - laneEl.clientWidth * 0.12);
+    }
   }
 
   function stopPolling() {
@@ -312,8 +391,10 @@
       if (e) laneW = e.contentRect.width;
     });
     ro.observe(laneEl);
+    laneEl.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       window.removeEventListener("keydown", onKey);
+      laneEl.removeEventListener("wheel", onWheel);
       ro?.disconnect();
     };
   });
@@ -351,11 +432,23 @@
       <button class="ghost" class:on={looped} onclick={toggleLoop} title="Loop the timeline">
         <Repeat size={13} />
       </button>
-      <span class="time">{position.toFixed(1)}s{length ? ` / ${length.toFixed(1)}s` : ""}</span>
+      <span class="time">{fmtClock(position)}{length ? ` / ${fmtClock(length)}` : ""}</span>
       <span class="spacer"></span>
+      <button class="ghost" onclick={fit} disabled={!clips.length} title="Zoom out to show everything">Fit</button>
       <label class="zoom">
         Zoom
-        <input type="range" min="12" max="200" step="2" bind:value={pps} onchange={save} />
+        <input
+          type="range"
+          min="0"
+          max="1000"
+          step="1"
+          value={sliderFromPps(pps)}
+          oninput={(e) => {
+            pps = ppsFromSlider(Number(e.currentTarget.value));
+          }}
+          onchange={save}
+          title="Ctrl + scroll on the timeline also zooms"
+        />
       </label>
       <button class="ghost" onclick={clearAll} disabled={!clips.length}>Clear</button>
       {#if toast}<span class="ok">{toast}</span>{/if}
@@ -365,9 +458,9 @@
          onpointerleave={onLaneUp} role="presentation">
       <div class="inner" style="width:{span * pps}px">
         <div class="ruler" onpointerdown={scrub} role="presentation">
-          {#each ruler as t (t)}
-            <span class="tick" style="left:{t * pps}px">
-              <i></i><em>{t % 5 === 0 ? `${t}s` : ""}</em>
+          {#each ticks as tk (tk.t)}
+            <span class="tick" class:major={tk.major} style="left:{tk.t * pps}px">
+              <i></i>{#if tk.major}<em>{fmtTime(tk.t, majorStep)}</em>{/if}
             </span>
           {/each}
         </div>
@@ -381,6 +474,7 @@
             <div
               class="clip"
               class:sel={selId === c.id}
+              class:narrow={c.dur * pps < 34}
               style="left:{c.start * pps}px;top:{c.track * ROW_H + 3}px;width:{Math.max(
                 14,
                 c.dur * pps - 2,
@@ -499,7 +593,7 @@
   .time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 92px; }
   .spacer { flex: 1; }
   .zoom { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
-  .zoom input { width: 90px; }
+  .zoom input { width: 132px; }
   .ok { color: var(--ok); font-size: 11px; }
 
   .lane { flex: 1; overflow: auto; min-height: 0; position: relative; }
@@ -512,7 +606,8 @@
     user-select: none;
   }
   .tick { position: absolute; top: 0; bottom: 0; }
-  .tick i { position: absolute; left: 0; top: 12px; bottom: 0; width: 1px; background: var(--border); }
+  .tick i { position: absolute; left: 0; top: 16px; bottom: 0; width: 1px; background: rgba(127, 127, 127, 0.13); }
+  .tick.major i { top: 11px; background: var(--border); }
   .tick em {
     position: absolute;
     left: 3px;
@@ -540,6 +635,8 @@
   }
   .clip.sel { border-color: var(--accent-2); box-shadow: 0 0 0 2px var(--accent-ring); }
   .clip:active { cursor: grabbing; }
+  .clip.narrow { padding: 0; }
+  .clip.narrow .cn { display: none; }
   .clip .cn {
     font-size: 11px;
     white-space: nowrap;
