@@ -5,14 +5,19 @@
   import SoundCard from "$lib/SoundCard.svelte";
   import Pads from "$lib/Pads.svelte";
   import Select from "$lib/Select.svelte";
-  import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat } from "$lib/icons";
+  import Settings from "$lib/Settings.svelte";
+  import Timeline from "$lib/Timeline.svelte";
+  import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog, Volume2 } from "$lib/icons";
 
   type Sound = {
     id: string;
     path: string;
     name: string;
+    title: string | null;
+    artist: string | null;
     ext: string;
     duration_secs: number | null;
+    has_cover: boolean;
   };
   type Folder = {
     name: string;
@@ -23,7 +28,13 @@
   };
   type Node = { class: string; name: string; description: string; virtual_mic: boolean };
   type Device = { index: number; name: string; channels: number; rate: number };
-  type MicStatus = { present: boolean; source: string; sink: string; can_create: boolean };
+  type MicStatus = {
+    present: boolean;
+    source: string;
+    sink: string;
+    persistent: boolean;
+    can_manage: boolean;
+  };
   type Voice = {
     id: number;
     label: string;
@@ -42,6 +53,7 @@
   let mic: MicStatus | null = null;
   let nodes: Node[] = [];
   let outputs: Device[] = [];
+  let inputs: Device[] = [];
   let target = "Soundboard-Sink";
   let monitorOn = false;
   let monitorTarget = "";
@@ -49,6 +61,7 @@
   let micSource = "";
   let micGain = 1.0;
   let retrigger = "layer";
+  let theme = "default";
 
   const retriggerOpts = [
     { value: "layer", label: "Layer" },
@@ -58,8 +71,10 @@
   let loop = false;
   let masterGain = 0.85;
   let search = "";
-  let view: "library" | "pads" = "library";
+  let view: "library" | "pads" | "timeline" | "settings" = "library";
   let voices: Voice[] = [];
+  let scrub: { id: number; pos: number } | null = null;
+  let gainEdit: Record<number, number> = {};
   let busy = false;
   let toast = "";
   let poll: ReturnType<typeof setInterval>;
@@ -74,7 +89,7 @@
   function savePrefs() {
     localStorage.setItem(
       LS_PREFS,
-      JSON.stringify({ target, monitorOn, monitorTarget, loop, masterGain, micMix, micSource, micGain, retrigger }),
+      JSON.stringify({ target, monitorOn, monitorTarget, loop, masterGain, micMix, micSource, micGain, retrigger, theme }),
     );
   }
 
@@ -110,19 +125,44 @@
     return null;
   }
 
-  const sinks = () => nodes.filter((n) => n.class === "Audio/Sink");
-  const sources = () => nodes.filter((n) => n.class.startsWith("Audio/Source"));
+  // Unified endpoints: prefer PipeWire nodes on Linux, else cpal devices.
+  type Sink = { name: string; label: string; virtual_mic: boolean };
+
+  // Computed lists (assigned in `$:` below). Declared here so dependencies are
+  // explicit — Svelte does not track reads *inside* called functions.
+  let sinkList: Sink[] = [];
+  let sourceList: Sink[] = [];
+
+  const isCable = (name: string) =>
+    /cable|voicemeeter|blackhole|loopback audio|soundflower|virtual audio/i.test(name);
+
+  const computeSinks = (ns: Node[], outs: Device[]): Sink[] =>
+    ns.length
+      ? ns
+          .filter((n) => n.class === "Audio/Sink")
+          .map((n) => ({
+            name: n.name,
+            label:
+              n.name === "Soundboard-Sink"
+                ? "Soundboard Mic (Discord)"
+                : `${n.description || n.name}${n.virtual_mic ? " ★" : ""}`,
+            virtual_mic: n.virtual_mic,
+          }))
+      : outs.map((d) => ({ name: d.name, label: d.name, virtual_mic: isCable(d.name) }));
+
+  const computeSources = (ns: Node[], ins: Device[]): Sink[] =>
+    ns.length
+      ? ns
+          .filter((n) => n.class.startsWith("Audio/Source"))
+          .map((n) => ({ name: n.name, label: n.description || n.name, virtual_mic: n.virtual_mic }))
+      : ins.map((d) => ({ name: d.name, label: d.name, virtual_mic: false }));
 
   /** Best guess for the voice source: a processed one (Easy Effects) if present. */
   function preferredSource(): string {
-    const s = sources();
-    const ee = s.find((n) => /easy effects/i.test(n.description || "") || /ee_|easyeffects/i.test(n.name));
-    return (ee ?? s[0])?.name ?? "";
-  }
-
-  function labelFor(n: Node) {
-    if (n.name === "Soundboard-Sink") return "Soundboard Mic (Discord)";
-    return `${n.description || n.name}${n.virtual_mic ? " ★" : ""}`;
+    const ee = sourceList.find(
+      (n) => /easy effects/i.test(n.label) || /ee_|easyeffects/i.test(n.name),
+    );
+    return (ee ?? sourceList[0])?.name ?? "";
   }
 
   async function refreshLibrary(keepSelection = true) {
@@ -133,9 +173,10 @@
 
   async function refreshDevices() {
     mic = await invoke<MicStatus>("virtual_mic_status");
-    const d = await invoke<{ outputs: Device[]; nodes: Node[] }>("list_devices");
+    const d = await invoke<{ outputs: Device[]; inputs: Device[]; nodes: Node[] }>("list_devices");
     nodes = d.nodes;
     outputs = d.outputs;
+    inputs = d.inputs;
   }
 
   async function addFolder() {
@@ -163,7 +204,7 @@
     try {
       const id = await invoke<number | null>("play_sound", {
         path: s.path,
-        gain: masterGain,
+        gain: 1,
         looped: loop,
         route: monitorOn ? "both" : "mic",
         retrigger,
@@ -179,9 +220,9 @@
     try {
       await invoke("play_sound", {
         path,
-        gain: masterGain,
+        gain: 1,
         looped: loop,
-        route: "mic",
+        route: monitorOn ? "both" : "mic",
         retrigger,
       });
     } catch (e) {
@@ -198,7 +239,7 @@
       }
       await invoke("play_sound", {
         path: s.path,
-        gain: masterGain,
+        gain: 1,
         looped: false,
         route: "monitor",
       });
@@ -213,6 +254,51 @@
 
   async function stopVoice(id: number) {
     await invoke("stop_voice", { id });
+  }
+
+  async function seekVoice(id: number, position: number) {
+    try {
+      await invoke("seek_voice", { id, position });
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  async function setVoiceGain(id: number, gain: number) {
+    try {
+      await invoke("set_voice_gain", { id, gain });
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  /** Master volume — scales everything at render time (playing sounds, pads,
+   *  and timeline clips, including ones that start later). Independent of the
+   *  per-voice faders. */
+  async function applyMaster(v: number) {
+    masterGain = v;
+    try {
+      await invoke("set_master_gain", { gain: v });
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  function setTheme(t: string) {
+    theme = t;
+    savePrefs();
+  }
+
+  async function clearCaches() {
+    try {
+      await invoke("clear_cache");
+    } catch (e) {
+      flash(String(e));
+    }
+  }
+
+  function applyThemeToDom(t: string) {
+    if (typeof document !== "undefined") document.documentElement.dataset.theme = t;
   }
 
   async function applyTarget() {
@@ -291,6 +377,32 @@
     }
   }
 
+  async function installMic() {
+    busy = true;
+    try {
+      mic = await invoke<MicStatus>("install_virtual_mic");
+      await refreshDevices();
+      flash("Virtual mic will persist across restarts");
+    } catch (e) {
+      flash(String(e));
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function removeMic() {
+    busy = true;
+    try {
+      mic = await invoke<MicStatus>("remove_virtual_mic");
+      await refreshDevices();
+      flash("Persistent mic removed");
+    } catch (e) {
+      flash(String(e));
+    } finally {
+      busy = false;
+    }
+  }
+
   async function tone() {
     try {
       await invoke("play_test_tone", { route: monitorOn && !mic?.present ? "monitor" : "mic" });
@@ -308,7 +420,8 @@
     }
   }
 
-  onMount(async () => {
+  onMount(() => {
+    void (async () => {
     const storedPrefs = localStorage.getItem(LS_PREFS);
     if (storedPrefs) {
       try {
@@ -322,6 +435,7 @@
         micSource = p.micSource ?? micSource;
         micGain = p.micGain ?? micGain;
         retrigger = p.retrigger ?? retrigger;
+        theme = p.theme ?? theme;
       } catch {
         /* ignore */
       }
@@ -333,6 +447,12 @@
       } catch {
         /* ignore */
       }
+    }
+    // Master volume lives in the mixer (render time), so seed it from prefs.
+    try {
+      await invoke("set_master_gain", { gain: masterGain });
+    } catch {
+      /* engine not ready yet; the slider will push it */
     }
     if (!roots.length) roots = await invoke<string[]>("default_roots");
     localStorage.setItem(LS_ROOTS, JSON.stringify(roots));
@@ -362,25 +482,29 @@
     }
     if (roots.length) await refreshLibrary(false);
     poll = setInterval(pollVoices, 400);
+    })();
     return () => clearInterval(poll);
   });
 
   $: allLibSounds = allSounds(folders);
   $: navItems = flatten(folders);
-  $: targetNode = nodes.find((n) => n.name === target);
-  $: targetOk = !!targetNode?.virtual_mic;
+  $: sinkList = computeSinks(nodes, outputs);
+  $: sourceList = computeSources(nodes, inputs);
+  $: targetSink = sinkList.find((s) => s.name === target);
+  $: targetOk = !!targetSink?.virtual_mic;
   $: sinkOpts = [
     { value: "", label: "default sink" },
-    ...sinks().map((n) => ({ value: n.name, label: labelFor(n) })),
+    ...sinkList.map((s) => ({ value: s.name, label: s.label })),
   ];
   $: monitorOpts = [
     { value: "", label: "default output" },
-    ...sinks().map((n) => ({ value: n.name, label: n.description || n.name })),
+    ...sinkList.map((s) => ({ value: s.name, label: s.label })),
   ];
   $: sourceOpts = [
     { value: "", label: "choose source…" },
-    ...sources().map((n) => ({ value: n.name, label: n.description || n.name })),
+    ...sourceList.map((s) => ({ value: s.name, label: s.label })),
   ];
+  $: applyThemeToDom(theme);
   $: searchHits = search.trim()
     ? allSounds(folders).filter((s) => {
         const q = search.trim().toLowerCase();
@@ -405,6 +529,16 @@
         >Library</button
       >
       <button class="ghost" class:on={view === "pads"} onclick={() => (view = "pads")}>Pads</button>
+      <button class="ghost" class:on={view === "timeline"} onclick={() => (view = "timeline")}
+        >Timeline</button
+      >
+      <button
+        class="ghost"
+        class:on={view === "settings"}
+        onclick={() => (view = "settings")}
+        title="Settings"
+        aria-label="Settings"><Cog size={14} /></button
+      >
     </div>
 
     <div class="controls">
@@ -451,20 +585,30 @@
           title="Voice source"
           width="185px"
         />
+        <label class="seg" title="Microphone level">
+          <Mic size={14} />
+          <input
+            type="range"
+            min="0"
+            max="2"
+            step="0.01"
+            bind:value={micGain}
+            onchange={applyMic}
+          />
+        </label>
+      {/if}
+
+      <label class="seg" title="Master volume — all soundboard sounds">
+        <Volume2 size={15} />
         <input
           type="range"
           min="0"
-          max="2"
+          max="1"
           step="0.01"
-          bind:value={micGain}
-          onchange={applyMic}
-          title="Mic level"
+          bind:value={masterGain}
+          oninput={(e) => applyMaster(Number(e.currentTarget.value))}
+          onchange={savePrefs}
         />
-      {/if}
-
-      <label class="seg" title="Volume">
-        Vol
-        <input type="range" min="0" max="1" step="0.01" bind:value={masterGain} onchange={savePrefs} />
       </label>
 
       <button class="ghost" class:on={loop} onclick={() => { loop = !loop; savePrefs(); }} title="Loop played sounds" aria-label="Loop">
@@ -481,7 +625,7 @@
         width="116px"
       />
       <button class="ghost" onclick={tone}>Test tone</button>
-      {#if !mic?.present && mic?.can_create}
+      {#if !mic?.present && mic?.can_manage}
         <button onclick={createMic} disabled={busy}>Create mic</button>
       {/if}
       <button class="stop" onclick={stopAll} disabled={!voices.length}><Square size={12} fill="currentColor" /> Stop all</button>
@@ -491,8 +635,10 @@
   {#if !mic?.present}
     <div class="banner">
       No virtual mic yet.
-      {#if mic?.can_create}
+      {#if mic?.can_manage}
         <button class="link" onclick={createMic}>Create “Soundboard Mic”</button>
+        <span class="muted">or</span>
+        <button class="link" onclick={installMic}>keep it across restarts</button>
       {:else}
         Install VB-CABLE (Windows) or <code>brew install blackhole-2ch</code> (macOS), then pick it as output.
       {/if}
@@ -503,7 +649,7 @@
 
   {#if mic?.present && !targetOk}
     <div class="banner warn">
-      <TriangleAlert size={13} /> Sounds are going to <b>{targetNode ? labelFor(targetNode) : "default sink"}</b>, which is
+      <TriangleAlert size={13} /> Sounds are going to <b>{targetSink ? targetSink.label : "default sink"}</b>, which is
       <b>not your virtual mic</b> — Discord won't hear them.
       <button class="link" onclick={useSoundboardMic}>Send to Soundboard Mic</button>
     </div>
@@ -547,9 +693,6 @@
     <section class="content">
       <div class="content-head">
         <input class="search" placeholder="Search all sounds…" bind:value={search} />
-        {#if selected && !search.trim()}
-          <span class="muted ellipsis">{selected.path}</span>
-        {/if}
       </div>
 
       {#if search.trim()}
@@ -585,8 +728,20 @@
       {/if}
     </section>
   </div>
-  {:else}
+  {:else if view === "pads"}
     <Pads sounds={allLibSounds} play={playPath} />
+  {:else if view === "timeline"}
+    <Timeline sounds={allLibSounds} />
+  {:else}
+    <Settings
+      {theme}
+      onTheme={setTheme}
+      onClearCache={clearCaches}
+      {mic}
+      micBusy={busy}
+      onInstallMic={installMic}
+      onRemoveMic={removeMic}
+    />
   {/if}
 
   <footer class="nowbar">
@@ -594,8 +749,38 @@
     {#each voices as v (v.id)}
       <span class="now" class:mon={v.route === "monitor"}>
         {#if v.route === "monitor"}<Headphones size={12} />{:else if v.looped}<Repeat size={12} />{:else}<Music size={11} />{/if}
-        {v.label}
-        <span class="bar"><i style="width: {(v.progress * 100).toFixed(0)}%"></i></span>
+        <span class="lbl">{v.label}</span>
+        <input
+          class="seek"
+          type="range"
+          min="0"
+          max="1"
+          step="0.001"
+          title="Seek"
+          value={scrub?.id === v.id ? scrub.pos : v.progress}
+          onpointerdown={() => (scrub = { id: v.id, pos: v.progress })}
+          oninput={(e) => {
+            const p = Number(e.currentTarget.value);
+            scrub = { id: v.id, pos: p };
+            seekVoice(v.id, p);
+          }}
+          onpointerup={() => (scrub = null)}
+          onchange={() => (scrub = null)}
+        />
+        <input
+          class="gain"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          title="Volume (this sound)"
+          value={gainEdit[v.id] ?? v.gain}
+          oninput={(e) => {
+            const g = Number(e.currentTarget.value);
+            gainEdit[v.id] = g;
+            setVoiceGain(v.id, g);
+          }}
+        />
         <button class="x" onclick={() => stopVoice(v.id)}><X size={12} /></button>
       </span>
     {/each}
@@ -621,6 +806,23 @@
     --danger: #e0565b;
   }
   :global(svg.lucide) { vertical-align: -0.15em; }
+  :global(:root[data-theme="dark"]) {
+    --bg: #000000;
+    --panel: #16181c;
+    --panel-2: #1c1f23;
+    --panel-3: #22262b;
+    --border: #2f3336;
+    --text: #e7e9ea;
+    --text-2: #c7cbd0;
+    --muted: #71767b;
+    /* keep the Kakiri violet accent instead of X blue */
+    --accent: #8b5cf6;
+    --accent-2: #b79bff;
+    --accent-dim: #2e2350;
+    --accent-ring: rgba(139, 92, 246, 0.35);
+    --ok: #00ba7c;
+    --danger: #f4212e;
+  }
   :global(body) {
     margin: 0;
     height: 100vh;
@@ -715,14 +917,13 @@
   .content { flex: 1; overflow-y: auto; padding: 14px 18px; min-width: 0; }
   .content-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
   .search { width: 260px; }
-  .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 0 8px; }
 
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip { background: var(--panel-3); color: var(--text-2); }
   .grid {
-    display: grid; gap: 10px;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    display: grid; gap: 4px;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   }
   .pad { padding: 4px 0; }
 
@@ -735,8 +936,9 @@
     background: var(--panel-3); border-radius: 999px; padding: 3px 6px 3px 10px;
   }
   .now.mon { background: var(--accent-dim); }
-  .bar { width: 60px; height: 4px; background: var(--bg); border-radius: 2px; overflow: hidden; }
-  .bar i { display: block; height: 100%; background: var(--accent-2); }
+  .now .lbl { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .now input[type="range"] { width: 72px; flex: none; }
+  .now input.gain { width: 54px; flex: none; opacity: .85; }
   .toast { margin-left: auto; color: var(--ok); font-size: 12px; }
   .muted { color: var(--muted); font-size: 12px; }
 </style>

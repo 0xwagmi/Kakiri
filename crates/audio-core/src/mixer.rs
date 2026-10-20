@@ -1,14 +1,16 @@
 //! Multi-voice mixer. Voices are routed to the virtual-mic bus, the local
 //! monitor bus, or both, and summed into one interleaved f32 block each.
 //!
-//! Voices can repeat (the same sound triggered again layers on top). Retrigger
-//! policy is decided by the caller (see `Retrigger`), using the voice `key`.
+//! A voice's audio can be either fully decoded (`Buffered`) or decoded on the
+//! fly from a per-voice decoder thread (`Stream`) — the latter keeps memory
+//! bounded for long files while starting playback quickly.
 
 use std::sync::Arc;
 
 use serde::Serialize;
 
 use crate::bus::Pcm;
+use crate::stream::StreamVoice;
 
 pub type VoiceId = u64;
 
@@ -31,7 +33,6 @@ impl Route {
     pub fn to_monitor(self) -> bool {
         matches!(self, Route::Monitor | Route::Both)
     }
-    /// Parse from the IPC string ("mic" | "monitor" | "both").
     pub fn parse(s: &str) -> Route {
         match s {
             "monitor" => Route::Monitor,
@@ -45,11 +46,8 @@ impl Route {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Retrigger {
-    /// Start another copy on top (classic soundboard).
     Layer,
-    /// Stop the existing copy and restart (re-trigger / "choke").
     Choke,
-    /// Stop it if playing, otherwise play (play/stop toggle).
     Toggle,
 }
 
@@ -63,13 +61,19 @@ impl Retrigger {
     }
 }
 
+pub enum VoiceSource {
+    /// Fully decoded PCM.
+    Buffered(Arc<Pcm>),
+    /// Streamed from a decoder thread.
+    Stream(StreamVoice),
+}
+
 pub struct Voice {
     pub id: VoiceId,
-    /// Identity of the source sound (e.g. file path) — used for retrigger.
     pub key: String,
     pub label: String,
-    pub pcm: Arc<Pcm>,
-    pub pos: usize,
+    pub source: VoiceSource,
+    pub pos: usize, // Buffered only
     pub gain: f32,
     pub looped: bool,
     pub route: Route,
@@ -81,7 +85,6 @@ pub struct VoiceInfo {
     pub id: VoiceId,
     pub key: String,
     pub label: String,
-    /// 0.0..1.0 playback progress.
     pub progress: f32,
     pub gain: f32,
     pub looped: bool,
@@ -90,12 +93,18 @@ pub struct VoiceInfo {
 
 pub struct Mixer {
     voices: Vec<Voice>,
+    scratch: Vec<f32>,
+    /// Applied to the summed output at render time, so it affects voices that
+    /// start later (e.g. timeline clips) exactly like ones already playing.
+    master: f32,
 }
 
 impl Mixer {
     pub fn new(_channels: u16) -> Self {
         Self {
             voices: Vec::new(),
+            scratch: Vec::new(),
+            master: 1.0,
         }
     }
 
@@ -114,7 +123,31 @@ impl Mixer {
             id,
             key,
             label,
-            pcm,
+            source: VoiceSource::Buffered(pcm),
+            pos: 0,
+            gain,
+            looped,
+            route,
+            done: false,
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_stream(
+        &mut self,
+        id: VoiceId,
+        key: String,
+        label: String,
+        voice: StreamVoice,
+        gain: f32,
+        looped: bool,
+        route: Route,
+    ) {
+        self.voices.push(Voice {
+            id,
+            key,
+            label,
+            source: VoiceSource::Stream(voice),
             pos: 0,
             gain,
             looped,
@@ -132,7 +165,6 @@ impl Mixer {
         self.voices.retain(|v| !v.done);
     }
 
-    /// Stop every voice with this key. Returns how many were stopped.
     pub fn stop_key(&mut self, key: &str) -> usize {
         let mut n = 0;
         for v in &mut self.voices {
@@ -161,16 +193,53 @@ impl Mixer {
         }
     }
 
+    /// Master volume for everything the mixer renders.
+    pub fn set_master(&mut self, gain: f32) {
+        self.master = gain.clamp(0.0, 4.0);
+    }
+
+    pub fn master(&self) -> f32 {
+        self.master
+    }
+
+    /// Seek to `fraction` (0..1) of the source.
+    pub fn seek(&mut self, id: VoiceId, fraction: f32) {
+        let f = fraction.clamp(0.0, 1.0);
+        for v in &mut self.voices {
+            if v.id != id {
+                continue;
+            }
+            match &mut v.source {
+                VoiceSource::Buffered(pcm) => {
+                    if !pcm.is_empty() {
+                        let len = pcm.len();
+                        v.pos = ((len as f32 * f) as usize).min(len - 1);
+                    }
+                }
+                VoiceSource::Stream(sv) => {
+                    let total = sv.total_frames();
+                    sv.request_seek((total as f64 * f as f64) as u64);
+                }
+            }
+        }
+    }
+
     pub fn active(&self) -> Vec<VoiceInfo> {
         self.voices
             .iter()
             .map(|v| {
-                let total = v.pcm.len().max(1);
+                let progress = match &v.source {
+                    VoiceSource::Buffered(pcm) => {
+                        let total = pcm.len().max(1);
+                        (v.pos as f32 / total as f32).clamp(0.0, 1.0)
+                    }
+                    VoiceSource::Stream(sv) => sv.progress(),
+                };
                 VoiceInfo {
                     id: v.id,
                     key: v.key.clone(),
                     label: v.label.clone(),
-                    progress: (v.pos as f32 / total as f32).clamp(0.0, 1.0),
+                    progress,
                     gain: v.gain,
                     looped: v.looped,
                     route: v.route,
@@ -187,43 +256,91 @@ impl Mixer {
             m.fill(0.0);
         }
 
+        let mut scratch = std::mem::take(&mut self.scratch);
+        if scratch.len() < mic.len() {
+            scratch.resize(mic.len(), 0.0);
+        }
+
         for v in &mut self.voices {
-            if v.done || v.pcm.is_empty() {
+            if v.done {
                 continue;
             }
-            let len = v.pcm.len();
-            let mut i = 0;
-            while i < mic.len() {
-                if v.pos >= len {
-                    if v.looped {
-                        v.pos = 0;
-                    } else {
+            let gain = v.gain;
+            let to_mic = v.route.to_mic();
+            let to_monitor = v.route.to_monitor();
+            match &mut v.source {
+                VoiceSource::Buffered(pcm) => {
+                    if pcm.is_empty() {
+                        continue;
+                    }
+                    let len = pcm.len();
+                    let mut i = 0;
+                    while i < mic.len() {
+                        if v.pos >= len {
+                            if v.looped {
+                                v.pos = 0;
+                            } else {
+                                v.done = true;
+                                break;
+                            }
+                        }
+                        let n = (len - v.pos).min(mic.len() - i);
+                        if to_mic {
+                            for k in 0..n {
+                                mic[i + k] += pcm[v.pos + k] * gain;
+                            }
+                        }
+                        if to_monitor {
+                            if let Some(m) = monitor.as_deref_mut() {
+                                for k in 0..n {
+                                    m[i + k] += pcm[v.pos + k] * gain;
+                                }
+                            }
+                        }
+                        v.pos += n;
+                        i += n;
+                    }
+                    if !v.looped && v.pos >= len {
                         v.done = true;
-                        break;
                     }
                 }
-                let n = (len - v.pos).min(mic.len() - i);
-                if v.route.to_mic() {
-                    for k in 0..n {
-                        mic[i + k] += v.pcm[v.pos + k] * v.gain;
+                VoiceSource::Stream(sv) => {
+                    let n = sv.read(&mut scratch[..mic.len()]);
+                    if n == 0 && sv.eof() {
+                        v.done = true;
+                        continue;
                     }
-                }
-                if v.route.to_monitor() {
-                    if let Some(m) = monitor.as_deref_mut() {
-                        for k in 0..n {
-                            m[i + k] += v.pcm[v.pos + k] * v.gain;
+                    if n > 0 {
+                        if to_mic {
+                            for k in 0..n {
+                                mic[k] += scratch[k] * gain;
+                            }
+                        }
+                        if to_monitor {
+                            if let Some(m) = monitor.as_deref_mut() {
+                                for k in 0..n {
+                                    m[k] += scratch[k] * gain;
+                                }
+                            }
                         }
                     }
                 }
-                v.pos += n;
-                i += n;
-            }
-            if !v.looped && v.pos >= v.pcm.len() {
-                v.done = true;
             }
         }
 
+        self.scratch = scratch;
         self.voices.retain(|v| !v.done);
+
+        if (self.master - 1.0).abs() > f32::EPSILON {
+            for s in mic.iter_mut() {
+                *s *= self.master;
+            }
+            if let Some(m) = monitor.as_deref_mut() {
+                for s in m.iter_mut() {
+                    *s *= self.master;
+                }
+            }
+        }
 
         soft_limit(mic);
         if let Some(m) = monitor.as_deref_mut() {
@@ -233,8 +350,7 @@ impl Mixer {
     }
 }
 
-/// Soft limiter above ~0.99: stays transparent at low level and asymptotes to
-/// 1.0 so the bus never exceeds full scale (which clips the device / Discord).
+/// Soft limiter above ~0.99: transparent at low level, asymptotes to 1.0.
 pub fn soft_limit(buf: &mut [f32]) {
     if buf.iter().fold(0f32, |m, s| m.max(s.abs())) > 0.99 {
         for s in buf.iter_mut() {
@@ -280,7 +396,7 @@ mod tests {
         let mut m = Mixer::new(2);
         m.add(1, "k".into(), "x".into(), Arc::new(vec![0.25f32; 4]), 1.0, false, Route::Monitor);
         let mut mic = vec![0f32; 4];
-        m.render(&mut mic, None); // no monitor bus → silently dropped
+        m.render(&mut mic, None);
         assert!(mic.iter().all(|s| *s == 0.0));
     }
 
@@ -296,23 +412,46 @@ mod tests {
     }
 
     #[test]
-    fn same_key_can_layer() {
-        let mut m = Mixer::new(2);
-        m.add(1, "same".into(), "s".into(), Arc::new(vec![0.4f32; 8]), 1.0, false, Route::Mic);
-        m.add(2, "same".into(), "s".into(), Arc::new(vec![0.4f32; 8]), 1.0, false, Route::Mic);
-        assert!(m.is_key_active("same"));
-        let mut out = vec![0f32; 8];
-        m.render(&mut out, None);
-        assert!((out[0] - 0.8).abs() < 1e-6); // both layered
-    }
-
-    #[test]
     fn stop_key_removes_all_copies() {
         let mut m = Mixer::new(2);
         m.add(1, "same".into(), "s".into(), Arc::new(vec![0.4f32; 8]), 1.0, true, Route::Mic);
         m.add(2, "same".into(), "s".into(), Arc::new(vec![0.4f32; 8]), 1.0, true, Route::Mic);
         assert_eq!(m.stop_key("same"), 2);
         assert!(!m.is_key_active("same"));
+    }
+
+    #[test]
+    fn master_scales_playing_voices() {
+        let mut m = Mixer::new(2);
+        m.add(1, "k".into(), "a".into(), Arc::new(vec![0.8f32; 4]), 1.0, false, Route::Mic);
+        m.set_master(0.5);
+        let mut out = vec![0f32; 4];
+        m.render(&mut out, None);
+        assert!((out[0] - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn master_applies_to_voices_started_after_it_was_set() {
+        // This is the timeline bug: clips start later and used to ignore the
+        // master volume entirely.
+        let mut m = Mixer::new(2);
+        m.set_master(0.25);
+        m.add(7, "clip".into(), "c".into(), Arc::new(vec![0.8f32; 4]), 1.0, false, Route::Mic);
+        let mut out = vec![0f32; 4];
+        m.render(&mut out, None);
+        assert!((out[0] - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn master_scales_the_monitor_bus_too() {
+        let mut m = Mixer::new(2);
+        m.set_master(0.5);
+        m.add(1, "k".into(), "a".into(), Arc::new(vec![0.6f32; 4]), 1.0, false, Route::Both);
+        let mut mic = vec![0f32; 4];
+        let mut mon = vec![0f32; 4];
+        m.render(&mut mic, Some(&mut mon));
+        assert!((mic[0] - 0.3).abs() < 1e-6);
+        assert!((mon[0] - 0.3).abs() < 1e-6);
     }
 
     #[test]

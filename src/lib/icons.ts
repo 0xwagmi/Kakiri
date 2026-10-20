@@ -11,3 +11,5 @@ export { default as TriangleAlert } from "lucide-svelte/icons/triangle-alert";
 export { default as Plus } from "lucide-svelte/icons/plus";
 export { default as Repeat } from "lucide-svelte/icons/repeat";
 export { default as ChevronDown } from "lucide-svelte/icons/chevron-down";
+export { default as Cog } from "lucide-svelte/icons/cog";
+export { default as Volume2 } from "lucide-svelte/icons/volume-2";

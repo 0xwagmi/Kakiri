@@ -20,9 +20,28 @@ pw-loopback \
 - The app plays the mix into the **`Soundboard-Sink`** node
   (`pw-play --target Soundboard-Sink`).
 - Discord input = **"Soundboard Mic"** (`Soundboard-Source`).
-- Lifecycle: not persistent — dies on reboot/logout. The app starts it on
-  launch (and on demand) and kills it on exit. Same model as the existing
-  `recreate_ai_mic.sh`.
+- Lifecycle: the app creates it on launch and it dies with the app by default.
+  For a **persistent** device (survives app exit *and* reboots) the app can
+  install a PipeWire drop-in,
+  `~/.config/pipewire/pipewire.conf.d/90-kakiri-soundboard.conf`, which loads
+  `libpipewire-module-loopback` inside the daemon itself:
+
+```
+context.modules = [
+    { name = libpipewire-module-loopback
+      args = {
+          capture.props  = { node.name = "Soundboard-Sink"   media.class = "Audio/Sink" }
+          playback.props = { node.name = "Soundboard-Source"  media.class = "Audio/Source"
+                             node.description = "Soundboard Mic" }
+      }
+    }
+]
+```
+
+  Because the daemon owns the nodes, nothing can orphan them. A `context.modules`
+  drop-in is *merged* with the base config (verified — it does not replace it).
+  Toggle it in **Settings → Virtual microphone**. Removing it takes effect at the
+  next PipeWire start.
 - Reuse option: the existing `AI-Mic-Sink` / `AI Mic` pair from the Python
   project can be selected instead.
 

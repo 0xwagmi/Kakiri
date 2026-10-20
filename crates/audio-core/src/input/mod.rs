@@ -6,6 +6,9 @@
 
 use anyhow::Result;
 
+pub mod cpal_in;
+pub use cpal_in::CpalInput;
+
 #[cfg(target_os = "linux")]
 pub mod pw_cli;
 #[cfg(target_os = "linux")]

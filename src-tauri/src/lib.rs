@@ -9,21 +9,20 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 
-use audio_core::bus::{BusFormat, Pcm};
+use audio_core::bus::BusFormat;
 use audio_core::engine::Engine;
 use audio_core::input::AudioInput;
 use audio_core::library::Folder;
 use audio_core::mixer::{Retrigger, Route, VoiceInfo};
 use audio_core::output::AudioOutput;
-
-const MIC_SINK: &str = "Soundboard-Sink";
-const MIC_SOURCE: &str = "Soundboard-Source";
+use audio_core::timeline::{Clip, TimelineStatus};
+use audio_core::virtualmic::{self, VirtualMic as MicStatus};
 
 #[derive(Clone)]
 struct AppState {
     engine: Arc<Engine>,
-    /// Decoded PCM cache, keyed by absolute path.
-    cache: Arc<Mutex<HashMap<String, Arc<Pcm>>>>,
+    /// Cover-art data-URL cache, keyed by absolute path.
+    art_cache: Arc<Mutex<HashMap<String, Option<String>>>>,
 }
 
 /// The virtual-mic output. Native PipeWire by default on Linux; set
@@ -47,8 +46,11 @@ fn make_output(target: String, fmt: BusFormat) -> Box<dyn AudioOutput> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (target, fmt);
-        Box::new(audio_core::output::NullOutput)
+        Box::new(audio_core::output::CpalOutput::new(
+            target,
+            fmt.rate,
+            fmt.channels,
+        ))
     }
 }
 
@@ -73,15 +75,12 @@ fn make_input(target: String, fmt: BusFormat) -> Box<dyn AudioInput> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (target, fmt);
-        Box::new(audio_core::input::NullInput)
+        Box::new(audio_core::input::CpalInput::new(
+            target,
+            fmt.rate,
+            fmt.channels,
+        ))
     }
-}
-
-fn output_available() -> bool {
-    audio_core::devices::pipewire_nodes()
-        .map(|ns| ns.iter().any(|n| n.name == MIC_SINK))
-        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -107,20 +106,26 @@ struct Node {
 #[derive(Serialize)]
 struct Devices {
     outputs: Vec<Device>,
+    inputs: Vec<Device>,
     nodes: Vec<Node>,
 }
 
-#[derive(Serialize)]
-struct MicStatus {
-    present: bool,
-    source: String,
-    sink: String,
-    can_create: bool,
-}
-
 #[tauri::command]
-fn list_devices() -> Result<Devices, String> {
+async fn list_devices() -> Result<Devices, String> {
+    // Device enumeration (ALSA/cpal + pw-dump) can take a while — keep it off
+    // the main thread so the window stays responsive at startup.
+    tauri::async_runtime::spawn_blocking(|| {
     let outputs = audio_core::devices::cpal_outputs()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|d| Device {
+            index: d.index,
+            name: d.name,
+            channels: d.channels,
+            rate: d.rate,
+        })
+        .collect();
+    let inputs = audio_core::devices::cpal_inputs()
         .map_err(|e| e.to_string())?
         .into_iter()
         .map(|d| Device {
@@ -140,71 +145,42 @@ fn list_devices() -> Result<Devices, String> {
             description: n.description,
         })
         .collect();
-    Ok(Devices { outputs, nodes })
-}
-
-#[tauri::command]
-fn virtual_mic_status() -> Result<MicStatus, String> {
-    let nodes = audio_core::devices::pipewire_nodes().map_err(|e| e.to_string())?;
-    Ok(MicStatus {
-        present: nodes.iter().any(|n| n.name == MIC_SINK),
-        source: MIC_SOURCE.to_string(),
-        sink: MIC_SINK.to_string(),
-        can_create: cfg!(target_os = "linux"),
+        Ok::<Devices, String>(Devices { outputs, inputs, nodes })
     })
-}
-
-#[cfg(target_os = "linux")]
-fn mic_create_impl() -> Result<MicStatus, String> {
-    use std::process::{Command, Stdio};
-    use std::time::Duration;
-
-    let _ = Command::new("pkill")
-        .args(["-9", "-f", "pw-loopback.*Soundboard-Sink"])
-        .stderr(Stdio::null())
-        .status();
-    std::thread::sleep(Duration::from_millis(300));
-
-    Command::new("pw-loopback")
-        .args([
-            format!("--capture-props=node.name={MIC_SINK} media.class=Audio/Sink"),
-            format!(
-                "--playback-props=node.name={MIC_SOURCE} media.class=Audio/Source node.description=\"Soundboard Mic\""
-            ),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("failed to spawn pw-loopback: {e}"))?;
-
-    std::thread::sleep(Duration::from_millis(600));
-    virtual_mic_status()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn mic_create_impl() -> Result<MicStatus, String> {
-    Err("this build cannot create a virtual mic; install VB-CABLE (Windows) or BlackHole (macOS)".into())
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn create_virtual_mic() -> Result<MicStatus, String> {
-    mic_create_impl()
+async fn virtual_mic_status() -> Result<MicStatus, String> {
+    tauri::async_runtime::spawn_blocking(virtualmic::status)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
+/// Create the virtual mic for this session (an ephemeral `pw-loopback` on Linux).
 #[tauri::command]
-fn destroy_virtual_mic() -> Result<MicStatus, String> {
-    #[cfg(target_os = "linux")]
-    {
-        use std::process::{Command, Stdio};
-        use std::time::Duration;
-        let _ = Command::new("pkill")
-            .args(["-9", "-f", "pw-loopback.*Soundboard-Sink"])
-            .stderr(Stdio::null())
-            .status();
-        std::thread::sleep(Duration::from_millis(300));
-    }
-    virtual_mic_status()
+async fn create_virtual_mic() -> Result<MicStatus, String> {
+    tauri::async_runtime::spawn_blocking(virtualmic::ensure)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Install a PipeWire drop-in so the virtual mic is created by the daemon from
+/// boot on, and survives Kakiri quitting. (Windows/macOS: not supported.)
+#[tauri::command]
+async fn install_virtual_mic() -> Result<MicStatus, String> {
+    tauri::async_runtime::spawn_blocking(virtualmic::install_persistent)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Remove the drop-in and stop any ephemeral loopback.
+#[tauri::command]
+async fn remove_virtual_mic() -> Result<MicStatus, String> {
+    tauri::async_runtime::spawn_blocking(virtualmic::remove_persistent)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // ---------------------------------------------------------------------------
@@ -322,11 +298,29 @@ async fn library_scan(roots: Vec<String>) -> Result<Vec<Folder>, String> {
     .map_err(|e| e.to_string())
 }
 
+/// Embedded cover art for a file as a `data:` URL (cached), or `None`.
+#[tauri::command]
+async fn artwork(state: tauri::State<'_, AppState>, path: String) -> Result<Option<String>, String> {
+    let cache = state.art_cache.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let cached = { cache.lock().unwrap().get(&path).cloned() };
+        if let Some(v) = cached {
+            return Ok::<_, String>(v);
+        }
+        let url = audio_core::tags::cover_data_url(Path::new(&path));
+        cache.lock().unwrap().insert(path, url.clone());
+        Ok(url)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ---------------------------------------------------------------------------
 // Playback
 // ---------------------------------------------------------------------------
 
-/// Decode (or reuse cached) a file and start a voice. Returns the voice id.
+/// Start a streaming voice for a file. Returns the voice id (or `None` if a
+/// Toggle retrigger stopped the playing copy).
 #[tauri::command]
 async fn play_sound(
     state: tauri::State<'_, AppState>,
@@ -337,30 +331,23 @@ async fn play_sound(
     retrigger: Option<String>,
 ) -> Result<Option<u64>, String> {
     let engine = state.engine.clone();
-    let cache = state.cache.clone();
     let gain = gain.unwrap_or(0.85);
     let looped = looped.unwrap_or(false);
     let route = Route::parse(route.as_deref().unwrap_or("mic"));
     let retrigger = Retrigger::parse(retrigger.as_deref().unwrap_or("layer"));
 
     tauri::async_runtime::spawn_blocking(move || {
-        let cached = { cache.lock().unwrap().get(&path).cloned() };
-        let pcm = match cached {
-            Some(pcm) => pcm,
-            None => {
-                let fmt = engine.format();
-                let decoded = audio_core::decode::decode_file(Path::new(&path), fmt)
-                    .map_err(|e| e.to_string())?;
-                let arc = Arc::new(decoded.pcm);
-                cache.lock().unwrap().insert(path.clone(), arc.clone());
-                arc
-            }
-        };
         let label = Path::new(&path)
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("sound")
             .to_string();
+        let start = |engine: &std::sync::Arc<audio_core::engine::Engine>| {
+            engine
+                .play_stream(path.clone(), label.clone(), PathBuf::from(&path), gain, looped, route)
+                .map(Some)
+                .map_err(|e| e.to_string())
+        };
 
         match retrigger {
             // already playing → stop it (play/stop toggle)
@@ -371,10 +358,10 @@ async fn play_sound(
             // restart from the top
             Retrigger::Choke => {
                 engine.stop_key(&path);
-                Ok(Some(engine.play(path, label, pcm, gain, looped, route)))
+                start(&engine)
             }
             // layer another copy on top (default)
-            _ => Ok(Some(engine.play(path, label, pcm, gain, looped, route))),
+            _ => start(&engine),
         }
     })
     .await
@@ -386,6 +373,7 @@ fn stop_voice(state: tauri::State<'_, AppState>, id: u64) {
     state.engine.stop(id);
 }
 
+/// Decode a file into the cache ahead of time.
 #[tauri::command]
 fn stop_all(state: tauri::State<'_, AppState>) {
     state.engine.stop_all();
@@ -397,13 +385,70 @@ fn set_voice_gain(state: tauri::State<'_, AppState>, id: u64, gain: f32) {
 }
 
 #[tauri::command]
+fn seek_voice(state: tauri::State<'_, AppState>, id: u64, position: f32) {
+    state.engine.seek(id, position);
+}
+
+/// Master volume: applied at render time, so it also affects sounds that start
+/// later (timeline clips, pads).
+#[tauri::command]
+fn set_master_gain(state: tauri::State<'_, AppState>, gain: f32) -> f32 {
+    state.engine.set_master(gain);
+    state.engine.master()
+}
+
+#[tauri::command]
 fn active_voices(state: tauri::State<'_, AppState>) -> Vec<VoiceInfo> {
     state.engine.active()
 }
 
+// ---------------------------------------------------------------------------
+// Timeline / arranger
+// ---------------------------------------------------------------------------
+
+/// Play a set of clips on the timeline. Clips overlapping in time are mixed.
+#[tauri::command]
+async fn timeline_play(
+    state: tauri::State<'_, AppState>,
+    clips: Vec<Clip>,
+    looped: Option<bool>,
+    from: Option<f64>,
+) -> Result<TimelineStatus, String> {
+    let engine = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        engine
+            .play_timeline(clips, looped.unwrap_or(false), from.unwrap_or(0.0))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn timeline_stop(state: tauri::State<'_, AppState>) {
+    state.engine.stop_timeline();
+}
+
+#[tauri::command]
+fn timeline_status(state: tauri::State<'_, AppState>) -> TimelineStatus {
+    state.engine.timeline_status()
+}
+
+/// Length of a clip list, so the UI can size the ruler without decoding.
+#[tauri::command]
+async fn timeline_length(
+    state: tauri::State<'_, AppState>,
+    clips: Vec<Clip>,
+) -> Result<f64, String> {
+    let engine = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || engine.timeline_length(&clips))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn clear_cache(state: tauri::State<'_, AppState>) {
-    state.cache.lock().unwrap().clear();
+    state.art_cache.lock().unwrap().clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -459,15 +504,14 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             let fmt = BusFormat::default();
-            let target = if output_available() {
-                MIC_SINK.to_string()
-            } else {
-                String::new()
-            };
+            // Bring the virtual mic up (the drop-in already did, if installed);
+            // never block startup waiting for it.
+            virtualmic::autostart();
+            let target = virtualmic::status().map(|m| m.sink).unwrap_or_default();
             let engine = Engine::new(fmt, make_output(target, fmt));
             app.manage(AppState {
                 engine,
-                cache: Arc::new(Mutex::new(HashMap::new())),
+                art_cache: Arc::new(Mutex::new(HashMap::new())),
             });
             Ok(())
         })
@@ -475,7 +519,8 @@ pub fn run() {
             list_devices,
             virtual_mic_status,
             create_virtual_mic,
-            destroy_virtual_mic,
+            install_virtual_mic,
+            remove_virtual_mic,
             set_output_target,
             set_monitor,
             monitor_status,
@@ -485,11 +530,18 @@ pub fn run() {
             play_test_tone,
             default_roots,
             library_scan,
+            artwork,
             play_sound,
             stop_voice,
             stop_all,
             set_voice_gain,
+            seek_voice,
+            set_master_gain,
             active_voices,
+            timeline_play,
+            timeline_stop,
+            timeline_status,
+            timeline_length,
             clear_cache,
             set_hotkeys,
         ])

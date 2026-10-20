@@ -3,7 +3,10 @@
 //! ADR-4: one `AudioOutput` trait; on Linux we target a specific PipeWire node
 //! with `pw-play --target`, on Windows/macOS we would use `CpalOutput`.
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
+
+pub mod cpal_out;
+pub use cpal_out::CpalOutput;
 
 #[cfg(target_os = "linux")]
 pub mod pw_cli;
@@ -45,6 +48,7 @@ impl AudioOutput for NullOutput {
 }
 
 /// Convenience for callers that need to check the output is live.
+#[cfg(target_os = "linux")]
 pub(crate) fn not_started() -> anyhow::Error {
-    anyhow!("audio output is not started")
+    anyhow::anyhow!("audio output is not started")
 }

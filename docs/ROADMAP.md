@@ -42,7 +42,8 @@ before committing to the full build — they retire the riskiest unknowns.
   (ARCHITECTURE §9).
 - [x] `AudioEngine` + `Mixer` + `AudioOutput` trait with `PipeWireCliOutput`
   (and `NullOutput`); `CpalOutput` still TODO.
-- [x] Decode (symphonia) + resample + in-memory cache.
+- [x] Decode (symphonia) + resample + **streaming playback** (no whole-file
+  cache; see Phase 2).
 - [x] Library scan of chosen folders (mp3/wav/flac/ogg/m4a/…) + duration probe.
 - [x] Folder/playlist browser UI; click a sound → play to selected device.
 - [x] Stop-all + per-voice stop.
@@ -54,7 +55,9 @@ before committing to the full build — they retire the riskiest unknowns.
   toggle + source picker + level. Validated end-to-end via
   `spike-routing passthrough`.
 - [x] Device / output-target picker.
-- [x] Linux: create/destroy `Soundboard Mic` (`pw-loopback`); status indicator.
+- [x] Linux: virtual mic (`pw-loopback`); status indicator. Auto-created at
+  launch; optional **persistent** PipeWire drop-in so Discord keeps a valid
+  input device even when Kakiri is closed.
 - [ ] Windows/macOS: virtual-cable detection + install guide.
 - [ ] Onboarding: Discord settings checklist + **Test tone** button. (test tone
   exists; the checklist is a banner only.)
@@ -87,9 +90,23 @@ clicked mp3 in Discord" in under 5 minutes, with no terminal use.
 - [~] Search, categories/tabs, favorites; drag-and-drop import. (search +
   folder tabs yes; favorites/dnd not yet)
 - [x] Persist library, layout, settings (localStorage: roots, prefs, pads).
+- [x] **Timeline / arranger** — stack sounds as clips on 6 tracks, drag to move,
+  drag between tracks, click the ruler to scrub, loop, zoom. Overlapping clips
+  mix (they start normal voices), so a jingle + a bed can be layered. Clips and
+  zoom persist in `localStorage`.
+  - `audio-core::timeline` runs a 4 ms scheduler over the existing mixer — no
+    second audio path. `play_timeline(clips, looped, from)` supports scrubbing;
+    a clip spanning the playhead resumes mid-file via `spawn_from`.
+  - Verified with synthetic tones: 1 s clip → silence gap → two overlapping
+    clips (louder sum), loop wrap at the timeline length, and `from` resuming
+    two clips mid-way.
 - [ ] Tray menu: mute all, volume, quit; single-instance.
 - [ ] VU/peak meters (throttled `levels` events).
-- [ ] Long-file streaming path (don't preload whole songs).
+- [x] Long-file streaming path (don't preload whole songs).
+  - Per-voice decoder thread + lock-free SPSC ring (`stream.rs`); stateful
+    Catmull-Rom resampler (`resample.rs`) continuous across packets.
+    Start latency **6.16 s → 8 ms** on a 4½-min m4a; memory ~0.8 MB/voice
+    (2 s ring) instead of ~104 MB. 0 dropouts (verified off the mic monitor).
 - [ ] Basic error surfacing (missing file, dead device → reconnect).
 
 **Acceptance:** daily-driver-able; a streamer could run an ambience loop and
