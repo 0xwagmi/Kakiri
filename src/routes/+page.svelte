@@ -204,7 +204,7 @@
     try {
       const id = await invoke<number | null>("play_sound", {
         path: s.path,
-        gain: masterGain,
+        gain: 1,
         looped: loop,
         route: monitorOn ? "both" : "mic",
         retrigger,
@@ -220,7 +220,7 @@
     try {
       await invoke("play_sound", {
         path,
-        gain: masterGain,
+        gain: 1,
         looped: loop,
         route: monitorOn ? "both" : "mic",
         retrigger,
@@ -239,7 +239,7 @@
       }
       await invoke("play_sound", {
         path: s.path,
-        gain: masterGain,
+        gain: 1,
         looped: false,
         route: "monitor",
       });
@@ -272,10 +272,11 @@
     }
   }
 
-  /** Master volume — applies live to every playing sound (and is the default for new ones). */
+  /** Master volume — scales everything at render time (playing sounds, pads,
+   *  and timeline clips, including ones that start later). Independent of the
+   *  per-voice faders. */
   async function applyMaster(v: number) {
     masterGain = v;
-    gainEdit = {}; // reset per-voice overrides so sliders reflect the new level
     try {
       await invoke("set_master_gain", { gain: v });
     } catch (e) {
@@ -446,6 +447,12 @@
       } catch {
         /* ignore */
       }
+    }
+    // Master volume lives in the mixer (render time), so seed it from prefs.
+    try {
+      await invoke("set_master_gain", { gain: masterGain });
+    } catch {
+      /* engine not ready yet; the slider will push it */
     }
     if (!roots.length) roots = await invoke<string[]>("default_roots");
     localStorage.setItem(LS_ROOTS, JSON.stringify(roots));
@@ -764,9 +771,9 @@
           class="gain"
           type="range"
           min="0"
-          max="2"
+          max="1"
           step="0.01"
-          title="Volume"
+          title="Volume (this sound)"
           value={gainEdit[v.id] ?? v.gain}
           oninput={(e) => {
             const g = Number(e.currentTarget.value);

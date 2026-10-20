@@ -282,6 +282,10 @@ fn cmd_stream(args: &[String]) -> Result<()> {
     } else {
         audio_core::mixer::Route::Mic
     };
+    if let Some(m) = flag(args, "--master").and_then(|v| v.parse::<f32>().ok()) {
+        engine.set_master(m);
+        println!("master = {m}");
+    }
     let t0 = Instant::now();
     let id = engine.play_stream(
         path.clone(),
@@ -311,7 +315,7 @@ fn cmd_timeline(args: &[String]) -> Result<()> {
     let from: f64 = flag(args, "--from").and_then(|v| v.parse().ok()).unwrap_or(0.0);
 
     let mut clips = Vec::new();
-    let takes_value = ["--target", "--seconds", "--gain", "--from", "--monitor"];
+    let takes_value = ["--target", "--seconds", "--gain", "--from", "--monitor", "--master"];
     let mut skip = false;
     for (i, a) in args.iter().enumerate() {
         if skip {
@@ -341,6 +345,10 @@ fn cmd_timeline(args: &[String]) -> Result<()> {
 
     let fmt = BusFormat::default();
     let engine = Engine::new(fmt, make_output(target.clone(), fmt));
+    if let Some(m) = flag(args, "--master").and_then(|v| v.parse::<f32>().ok()) {
+        engine.set_master(m);
+        println!("master = {m}");
+    }
     if let Some(mon) = flag(args, "--monitor") {
         engine.set_monitor(Some(make_output(mon.clone(), fmt)))?;
         println!("monitor -> {mon}");

@@ -389,10 +389,12 @@ fn seek_voice(state: tauri::State<'_, AppState>, id: u64, position: f32) {
     state.engine.seek(id, position);
 }
 
-/// Master volume: applies live to every playing voice.
+/// Master volume: applied at render time, so it also affects sounds that start
+/// later (timeline clips, pads).
 #[tauri::command]
-fn set_master_gain(state: tauri::State<'_, AppState>, gain: f32) {
-    state.engine.set_all_gain(gain);
+fn set_master_gain(state: tauri::State<'_, AppState>, gain: f32) -> f32 {
+    state.engine.set_master(gain);
+    state.engine.master()
 }
 
 #[tauri::command]

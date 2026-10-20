@@ -94,6 +94,9 @@ pub struct VoiceInfo {
 pub struct Mixer {
     voices: Vec<Voice>,
     scratch: Vec<f32>,
+    /// Applied to the summed output at render time, so it affects voices that
+    /// start later (e.g. timeline clips) exactly like ones already playing.
+    master: f32,
 }
 
 impl Mixer {
@@ -101,6 +104,7 @@ impl Mixer {
         Self {
             voices: Vec::new(),
             scratch: Vec::new(),
+            master: 1.0,
         }
     }
 
@@ -189,10 +193,13 @@ impl Mixer {
         }
     }
 
-    pub fn set_all_gain(&mut self, gain: f32) {
-        for v in &mut self.voices {
-            v.gain = gain;
-        }
+    /// Master volume for everything the mixer renders.
+    pub fn set_master(&mut self, gain: f32) {
+        self.master = gain.clamp(0.0, 4.0);
+    }
+
+    pub fn master(&self) -> f32 {
+        self.master
     }
 
     /// Seek to `fraction` (0..1) of the source.
@@ -324,6 +331,17 @@ impl Mixer {
         self.scratch = scratch;
         self.voices.retain(|v| !v.done);
 
+        if (self.master - 1.0).abs() > f32::EPSILON {
+            for s in mic.iter_mut() {
+                *s *= self.master;
+            }
+            if let Some(m) = monitor.as_deref_mut() {
+                for s in m.iter_mut() {
+                    *s *= self.master;
+                }
+            }
+        }
+
         soft_limit(mic);
         if let Some(m) = monitor.as_deref_mut() {
             soft_limit(m);
@@ -400,6 +418,40 @@ mod tests {
         m.add(2, "same".into(), "s".into(), Arc::new(vec![0.4f32; 8]), 1.0, true, Route::Mic);
         assert_eq!(m.stop_key("same"), 2);
         assert!(!m.is_key_active("same"));
+    }
+
+    #[test]
+    fn master_scales_playing_voices() {
+        let mut m = Mixer::new(2);
+        m.add(1, "k".into(), "a".into(), Arc::new(vec![0.8f32; 4]), 1.0, false, Route::Mic);
+        m.set_master(0.5);
+        let mut out = vec![0f32; 4];
+        m.render(&mut out, None);
+        assert!((out[0] - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn master_applies_to_voices_started_after_it_was_set() {
+        // This is the timeline bug: clips start later and used to ignore the
+        // master volume entirely.
+        let mut m = Mixer::new(2);
+        m.set_master(0.25);
+        m.add(7, "clip".into(), "c".into(), Arc::new(vec![0.8f32; 4]), 1.0, false, Route::Mic);
+        let mut out = vec![0f32; 4];
+        m.render(&mut out, None);
+        assert!((out[0] - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn master_scales_the_monitor_bus_too() {
+        let mut m = Mixer::new(2);
+        m.set_master(0.5);
+        m.add(1, "k".into(), "a".into(), Arc::new(vec![0.6f32; 4]), 1.0, false, Route::Both);
+        let mut mic = vec![0f32; 4];
+        let mut mon = vec![0f32; 4];
+        m.render(&mut mic, Some(&mut mon));
+        assert!((mic[0] - 0.3).abs() < 1e-6);
+        assert!((mon[0] - 0.3).abs() < 1e-6);
     }
 
     #[test]
