@@ -504,10 +504,6 @@
         </div>
       </div>
     </div>
-
-    {#if !clips.length}
-      <p class="hint">Pick sounds on the left to stack them on the timeline — overlapping clips mix together.</p>
-    {/if}
   </section>
 </div>
 
@@ -666,5 +662,4 @@
     background: var(--accent-2);
     pointer-events: none;
   }
-  .hint { color: var(--muted); font-size: 12px; padding: 10px 14px; margin: 0; }
 </style>
