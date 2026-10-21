@@ -249,13 +249,10 @@ pub fn length_of(clips: &[Clip], engine: &Engine) -> f64 {
     length_with(clips, |p| duration_of(p, engine))
 }
 
-/// Duration of a file. Uses the stream decoder's frame count; falls back to a
-/// small non-zero value so a clip still gets a sensible width in the UI.
-fn duration_of(path: &str, engine: &Engine) -> f64 {
-    match crate::decode::StreamDecoder::open(&PathBuf::from(path), engine.format()) {
-        Ok(d) if d.duration_secs() > 0.0 => d.duration_secs() as f64,
-        _ => 1.0,
-    }
+/// Duration of a file; falls back to a small non-zero value so a clip still
+/// gets a sensible width in the UI.
+fn duration_of(path: &str, _engine: &Engine) -> f64 {
+    crate::tags::duration_secs(&PathBuf::from(path)).unwrap_or(1.0)
 }
 
 /// Start playing `clips`, looping if `looped`.

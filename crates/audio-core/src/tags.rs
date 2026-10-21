@@ -30,6 +30,25 @@ fn open_format(path: &Path) -> Option<Box<dyn symphonia::core::formats::FormatRe
         .ok()
 }
 
+/// Duration in seconds, from the container when it knows it and from the
+/// decoder frame count otherwise.
+///
+/// Containers differ in which of the two is reliable (an mp4 with an edit list
+/// reports no frame count but a solid duration), so ask both before giving up.
+pub fn duration_secs(path: &Path) -> Option<f64> {
+    if let Some(info) = probe(path) {
+        if let Some(d) = info.duration_secs {
+            if d > 0.0 {
+                return Some(d as f64);
+            }
+        }
+    }
+    match crate::decode::StreamDecoder::open(path, crate::bus::BusFormat::default()) {
+        Ok(d) if d.duration_secs() > 0.0 => Some(d.duration_secs() as f64),
+        _ => None,
+    }
+}
+
 /// One probe for tags + duration + cover presence.
 pub fn probe(path: &Path) -> Option<ProbeInfo> {
     let mut format = open_format(path)?;

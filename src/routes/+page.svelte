@@ -3,12 +3,13 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import SoundCard from "$lib/SoundCard.svelte";
+  import Import from "$lib/Import.svelte";
   import catSvg from "$lib/assets/cat.svg?raw";
   import Pads from "$lib/Pads.svelte";
   import Select from "$lib/Select.svelte";
   import Settings from "$lib/Settings.svelte";
   import Timeline from "$lib/Timeline.svelte";
-  import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog, Volume2 } from "$lib/icons";
+  import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog, Volume2, Download } from "$lib/icons";
 
   type Sound = {
     id: string;
@@ -76,6 +77,8 @@
   let voices: Voice[] = [];
   let scrub: { id: number; pos: number } | null = null;
   let gainEdit: Record<number, number> = {};
+  let importOpen = false;
+  let pendingFiles: string[] = [];
   let busy = false;
   let toast = "";
   let poll: ReturnType<typeof setInterval>;
@@ -193,6 +196,41 @@
     } finally {
       busy = false;
     }
+  }
+
+  /** Every folder path in the tree — the destinations the import can target. */
+  function allFolderPaths(list: Folder[] = folders): string[] {
+    const out: string[] = [];
+    const walk = (fs: Folder[]) => {
+      for (const f of fs) {
+        out.push(f.path);
+        walk(f.children);
+      }
+    };
+    walk(list);
+    return out;
+  }
+
+  /** Select `path` after a rescan (the folder objects are rebuilt each scan). */
+  function selectFolderPath(path: string) {
+    const hit = findFolder(folders, path);
+    if (hit) selected = hit;
+  }
+
+  /** A finished import: show it right away by opening its folder. */
+  function onImported(sound: { path: string; name: string }) {
+    flash(`Added ${sound.name}`);
+    const dir = sound.path.replace(/[\\/][^\\/]+$/, "");
+    // Importing into a folder that isn't part of the library yet (the default
+    // ~/Music/Kakiri, say) would hide the new sound — adopt it as a root.
+    if (dir && !roots.some((r) => dir === r || dir.startsWith(r + "/") || dir.startsWith(r + "\\"))) {
+      roots = [...roots, dir];
+      localStorage.setItem(LS_ROOTS, JSON.stringify(roots));
+    }
+    void (async () => {
+      await refreshLibrary();
+      selectFolderPath(dir);
+    })();
   }
 
   async function removeRoot(path: string) {
@@ -484,7 +522,26 @@
     if (roots.length) await refreshLibrary(false);
     poll = setInterval(pollVoices, 400);
     })();
-    return () => clearInterval(poll);
+    // Dropping files on the window opens the import panel with those files.
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+        unlisten = await getCurrentWebview().onDragDropEvent((ev) => {
+          if (ev.payload.type !== "drop") return;
+          const paths = ev.payload.paths ?? [];
+          if (!paths.length) return;
+          pendingFiles = paths;
+          importOpen = true;
+        });
+      } catch {
+        /* not running inside Tauri (plain browser preview) */
+      }
+    })();
+    return () => {
+      clearInterval(poll);
+      unlisten?.();
+    };
   });
 
   $: allLibSounds = allSounds(folders);
@@ -661,7 +718,12 @@
     <aside class="sidebar">
       <div class="side-head">
         <span>Playlists</span>
-        <button class="link" onclick={addFolder}><Plus size={13} /> Add folder</button>
+        <button class="link" onclick={() => (importOpen = true)} title="Add sounds from a file or link">
+          <Download size={13} /> Import
+        </button>
+        <button class="link" onclick={addFolder} title="Add a folder to the library">
+          <Plus size={13} /> Folder
+        </button>
       </div>
       {#if !navItems.length}
         <p class="muted pad">No folders yet. Add the folder that holds your sounds.</p>
@@ -745,6 +807,17 @@
       micBusy={busy}
       onInstallMic={installMic}
       onRemoveMic={removeMic}
+    />
+  {/if}
+
+  {#if importOpen}
+    <Import
+      dest={selected?.path ?? roots[0] ?? ""}
+      folders={allFolderPaths()}
+      bind:pending={pendingFiles}
+      onConsumed={() => (pendingFiles = [])}
+      onDone={onImported}
+      onClose={() => (importOpen = false)}
     />
   {/if}
 

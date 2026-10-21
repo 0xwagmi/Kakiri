@@ -8,6 +8,7 @@ pub mod bus;
 pub mod decode;
 pub mod devices;
 pub mod engine;
+pub mod import;
 pub mod input;
 pub mod library;
 pub mod mixer;

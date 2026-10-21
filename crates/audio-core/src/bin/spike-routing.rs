@@ -456,6 +456,38 @@ fn cmd_timeline(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Import a file into a folder the same way the app does (copy audio, extract
+/// video with ffmpeg), and report what landed.
+fn cmd_import(args: &[String]) -> Result<()> {
+    use audio_core::import;
+    let (Some(src), Some(dest)) = (args.first(), args.get(1)) else {
+        anyhow::bail!("usage: spike-routing import <file> <dest-dir>");
+    };
+    println!(
+        "ffmpeg: {:?}",
+        import::ffmpeg().map(|p| p.display().to_string())
+    );
+    let mut last = -1.0f32;
+    let got = import::import_file(
+        std::path::Path::new(src),
+        std::path::Path::new(dest),
+        |pct, stage| {
+            if (pct - last).abs() > 0.19 || pct >= 1.0 {
+                last = pct;
+                println!("  {stage}: {:.0}%", pct * 100.0);
+            }
+        },
+    )
+    .map_err(anyhow::Error::msg)?;
+    println!(
+        "imported: {} ({:.2}s, {} bytes)",
+        got.path,
+        got.duration_secs,
+        std::fs::metadata(&got.path).map(|m| m.len()).unwrap_or(0)
+    );
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn cmd_mic(action: &str) -> Result<()> {
     use audio_core::virtualmic;
@@ -522,6 +554,7 @@ fn main() -> Result<()> {
         Some("stream") => cmd_stream(&args[1..]),
         Some("timeline") => cmd_timeline(&args[1..]),
         Some("meta") => cmd_meta(&args[1..]),
+        Some("import") => cmd_import(&args[1..]),
         #[cfg(target_os = "linux")]
         Some("mic") => cmd_mic(args.get(1).map(String::as_str).unwrap_or("")),
         Some("help") | Some("-h") | Some("--help") | None => {

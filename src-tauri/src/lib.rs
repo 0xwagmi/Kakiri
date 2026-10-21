@@ -13,6 +13,7 @@ use audio_core::bus::BusFormat;
 use audio_core::engine::Engine;
 use audio_core::input::AudioInput;
 use audio_core::library::Folder;
+pub mod download;
 use audio_core::mixer::{Retrigger, Route, VoiceInfo};
 use audio_core::output::AudioOutput;
 use audio_core::timeline::{Clip, TimelineStatus};
@@ -288,6 +289,18 @@ fn default_roots() -> Vec<String> {
     }
 }
 
+/// Where imports go when the library has no folders yet: `~/Music/Kakiri`,
+/// created on demand so a fresh install can still take a dropped file.
+#[tauri::command]
+fn import_default_folder() -> Result<String, String> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .ok_or("cannot find your home folder")?;
+    let dir = PathBuf::from(home).join("Music").join("Kakiri");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    Ok(dir.display().to_string())
+}
+
 #[tauri::command]
 async fn library_scan(roots: Vec<String>) -> Result<Vec<Folder>, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -472,6 +485,83 @@ async fn timeline_length(
         .map_err(|e| e.to_string())
 }
 
+/// What the import UI can offer (ffmpeg is only needed for video files).
+#[derive(serde::Serialize)]
+struct ImportTools {
+    ffmpeg: bool,
+}
+
+#[tauri::command]
+fn import_tools() -> ImportTools {
+    ImportTools {
+        ffmpeg: audio_core::import::ffmpeg().is_some(),
+    }
+}
+
+/// Progress for one import job, mirrored to a bar in the UI.
+#[derive(Clone, serde::Serialize)]
+struct ImportProgress {
+    job: String,
+    /// 0..1, negative while the total size is unknown.
+    pct: f32,
+    stage: String,
+}
+
+fn emit_progress(app: &tauri::AppHandle, job: &str, pct: f32, stage: &str) {
+    use tauri::Emitter;
+    let _ = app.emit(
+        "import-progress",
+        ImportProgress {
+            job: job.to_string(),
+            pct,
+            stage: stage.to_string(),
+        },
+    );
+}
+
+/// Import a file the user dropped or picked: audio is copied, video has its
+/// audio track extracted (ffmpeg).
+#[tauri::command]
+async fn import_file(
+    app: tauri::AppHandle,
+    job: String,
+    src: String,
+    dest: String,
+) -> Result<audio_core::import::Imported, String> {
+    let dest_dir = download::ensure_dest(&dest)?;
+    let src_path = std::path::PathBuf::from(&src);
+    let app2 = app.clone();
+    let job2 = job.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        audio_core::import::import_file(&src_path, &dest_dir, |pct, stage| {
+            emit_progress(&app2, &job2, pct, stage);
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Download a link into a library folder. Direct audio/video links only; page
+/// URLs (YouTube etc.) will come from yt-dlp.
+#[tauri::command]
+async fn import_url(
+    app: tauri::AppHandle,
+    job: String,
+    url: String,
+    dest: String,
+) -> Result<audio_core::import::Imported, String> {
+    let dest_dir = download::ensure_dest(&dest)?;
+    let app2 = app.clone();
+    let job2 = job.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        download::fetch(&url, &dest_dir, &mut |pct, stage| {
+            emit_progress(&app2, &job2, pct, stage);
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn clear_cache(state: tauri::State<'_, AppState>) {
     state.art_cache.lock().unwrap().clear();
@@ -571,6 +661,10 @@ pub fn run() {
             timeline_add_clip,
             timeline_remove_clip,
             timeline_set_loop,
+            import_tools,
+            import_default_folder,
+            import_file,
+            import_url,
             clear_cache,
             set_hotkeys,
         ])
