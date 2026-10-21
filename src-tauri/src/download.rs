@@ -15,6 +15,92 @@ use audio_core::import::{self, Imported};
 
 const MAX_BYTES: u64 = 512 * 1024 * 1024; // 512 MB is plenty for a sound
 
+/// Where a downloader we fetched ourselves lives (`<app data>/tools`).
+static TOOLS_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+pub fn set_tools_dir(dir: PathBuf) {
+    let _ = TOOLS_DIR.set(dir);
+}
+
+fn tool_exe(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    }
+}
+
+fn managed_tool(name: &str) -> Option<PathBuf> {
+    let dir = TOOLS_DIR.get()?;
+    let p = dir.join(tool_exe(name));
+    p.is_file().then_some(p)
+}
+
+fn version_of(exe: &Path) -> Option<String> {
+    let out = std::process::Command::new(exe)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!v.is_empty()).then_some(v)
+}
+
+/// The best `yt-dlp` we can find: our managed copy or whatever is on `PATH`,
+/// whichever is newer. Being out of date is the normal failure mode, so a stale
+/// system copy must never shadow a fresh one (or the other way round).
+pub fn ytdlp() -> Option<(PathBuf, String)> {
+    let mut best: Option<(PathBuf, String)> = None;
+    for cand in [managed_tool("yt-dlp"), import::find_tool("yt-dlp")]
+        .into_iter()
+        .flatten()
+    {
+        let Some(version) = version_of(&cand) else {
+            continue;
+        };
+        let newer = best.as_ref().is_none_or(|(_, v)| version > *v);
+        if newer {
+            best = Some((cand, version));
+        }
+    }
+    best
+}
+
+/// Read a child's pipe line by line on its own thread, so stdout and stderr
+/// can both be parsed without deadlocking on a full pipe.
+fn pump<R: std::io::Read + Send + 'static>(r: R, tx: std::sync::mpsc::Sender<String>) {
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(r).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+}
+
+fn friendly_ytdlp_error(raw: &str) -> String {
+    let msg = raw.trim();
+    let low = msg.to_ascii_lowercase();
+    if low.contains("unsupported url") {
+        return "The downloader doesn't recognise that site.".into();
+    }
+    if low.contains("not available on this app") || low.contains("sign in to confirm") {
+        return "The site refused the download — the downloader is probably out of date.                 Update it in Settings and try again."
+            .into();
+    }
+    if low.contains("requested format is not available") {
+        return "That video has no audio-only stream the downloader can fetch.".into();
+    }
+    if low.contains("private") || low.contains("removed") || low.contains("404") {
+        return "That video is private, removed or region-locked.".into();
+    }
+    format!("Downloader said: {msg}")
+}
+
 /// Extensions we will keep as-is when the URL advertises one.
 fn audio_ext(path: &str) -> Option<&'static str> {
     let lower = path.to_ascii_lowercase();
@@ -85,7 +171,68 @@ fn kind_from_content_type(ctype: &str) -> Option<&'static str> {
 /// Progress is reported as 0..1 (or a negative value while the size is
 /// unknown). The file appears atomically: it is written as `*.part` and only
 /// renamed when complete, so an interrupted download never shows up as a sound.
-pub fn fetch(url: &str, dest_dir: &Path, on_progress: &mut dyn FnMut(f32, &str)) -> Result<Imported, String> {
+/// One link in, a playable file out — direct media links go straight down,
+/// page links (YouTube/TikTok/…) go through yt-dlp.
+pub fn fetch(
+    url: &str,
+    dest_dir: &Path,
+    range: Option<(f64, f64)>,
+    on_progress: &mut dyn FnMut(f32, &str),
+) -> Result<Imported, String> {
+    let trimmed = url.trim();
+    // A URL that ends in a media extension is a file; download it directly.
+    let obvious_media = audio_ext(trimmed).is_some() || video_ext(trimmed).is_some();
+    // Otherwise ask the server what it would send. Download endpoints often have
+    // no extension but still serve a file, and page links answer text/html.
+    let page = if obvious_media {
+        false
+    } else {
+        match peek_content_type(trimmed) {
+            Some(ct) => !(ct.starts_with("audio/") || ct.starts_with("video/")),
+            None => true, // no answer (blocked, JS-only…) — let the downloader try
+        }
+    };
+
+    if page {
+        if ytdlp().is_some() {
+            return fetch_ytdlp(trimmed, dest_dir, range, on_progress);
+        }
+        if range.is_some() {
+            return Err("Cutting a clip needs the downloader (yt-dlp) and ffmpeg.".into());
+        }
+        return Err(MISSING_YTDLP.to_string());
+    }
+    if range.is_some() {
+        return Err("Cutting a clip needs the downloader (yt-dlp) and ffmpeg.".into());
+    }
+    fetch_direct(trimmed, dest_dir, on_progress)
+}
+
+/// Ask for the headers only, to find out what kind of thing a link points at.
+fn peek_content_type(url: &str) -> Option<String> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent(concat!("Kakiri/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(20))
+        .build()
+        .ok()?;
+    let resp = client.get(url).send().ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())?
+        .split(';')
+        .next()?
+        .trim()
+        .to_ascii_lowercase();
+    Some(ct)
+}
+
+/// Download a link that is known to be a file (no page handling).
+pub fn fetch_direct(url: &str, dest_dir: &Path, on_progress: &mut dyn FnMut(f32, &str)) -> Result<Imported, String> {
     let lower = url.trim().to_ascii_lowercase();
     if !(lower.starts_with("http://") || lower.starts_with("https://")) {
         return Err("Paste a link that starts with http:// or https://".into());
@@ -215,6 +362,243 @@ pub fn fetch(url: &str, dest_dir: &Path, on_progress: &mut dyn FnMut(f32, &str))
         duration_secs: import::duration_of(&target),
         path: target.to_string_lossy().to_string(),
     })
+}
+
+/// What a page link resolves to, for the "Get" preview in the UI.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PageInfo {
+    pub title: String,
+    pub duration_secs: f64,
+}
+
+/// Read a page's metadata without downloading it (also validates the link).
+pub fn probe_page(url: &str) -> Result<PageInfo, String> {
+    let (exe, _) = ytdlp().ok_or_else(|| MISSING_YTDLP.to_string())?;
+    let out = std::process::Command::new(&exe)
+        .args(["-J", "--no-playlist", "--no-warnings", url])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run the downloader: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let line = err
+            .lines()
+            .find(|l| l.contains("ERROR"))
+            .unwrap_or(err.trim())
+            .to_string();
+        return Err(friendly_ytdlp_error(&line));
+    }
+    let json: serde_json::Value =
+        serde_json::from_slice(&out.stdout).map_err(|e| format!("unreadable metadata: {e}"))?;
+    Ok(PageInfo {
+        title: json
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("download")
+            .to_string(),
+        duration_secs: json.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0),
+    })
+}
+
+pub const MISSING_YTDLP: &str =
+    "Page links (YouTube, TikTok, …) need the downloader. Set it up from the import panel.";
+
+/// Download a page link's audio into `dest_dir`, optionally just a slice.
+pub fn fetch_ytdlp(
+    url: &str,
+    dest_dir: &Path,
+    range: Option<(f64, f64)>,
+    on_progress: &mut dyn FnMut(f32, &str),
+) -> Result<Imported, String> {
+    let (exe, _version) = ytdlp().ok_or_else(|| MISSING_YTDLP.to_string())?;
+    std::fs::create_dir_all(dest_dir)
+        .map_err(|e| format!("cannot create {}: {e}", dest_dir.display()))?;
+
+    on_progress(0.0, "reading the page");
+    let info = probe_page(url)?;
+    if range.is_some() && import::ffmpeg().is_none() {
+        return Err("Cutting a clip needs ffmpeg installed.".into());
+    }
+
+    let stem = import::sanitize_stem(&info.title);
+    // Unique prefix so two jobs into the same folder can't mix up their files.
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let prefix = format!(".kakiri-{}-{stamp}", std::process::id());
+    let template = dest_dir.join(format!("{prefix}.%(ext)s"));
+
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("-f")
+        .arg("bestaudio[ext=m4a]/bestaudio/best")
+        .args(["--no-playlist", "--no-warnings", "--newline", "--no-simulate"])
+        .arg("-o")
+        .arg(&template);
+    if let Some((start, end)) = range {
+        let (a, b) = (start.max(0.0), end.max(start + 0.05));
+        cmd.arg("--download-sections")
+            .arg(format!("*{a:.2}-{b:.2}"))
+            .args(["--force-keyframes-at-cuts"]);
+    }
+    cmd.arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    on_progress(0.0, "downloading");
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("cannot run the downloader: {e}"))?;
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    if let Some(out) = child.stdout.take() {
+        pump(out, tx.clone());
+    }
+    if let Some(err) = child.stderr.take() {
+        pump(err, tx.clone());
+    }
+    drop(tx);
+
+    let mut complaint = String::new();
+    for line in rx {
+        if line.contains("ERROR") {
+            complaint = line.clone();
+        }
+        if let Some(pct) = parse_ytdlp_percent(&line) {
+            on_progress((pct / 100.0).clamp(0.0, 0.98), "downloading");
+        } else if line.contains("[ExtractAudio]") || line.contains("[Merger]") {
+            on_progress(0.99, "extracting");
+        }
+    }
+
+    let status = child.wait().map_err(|e| format!("downloader: {e}"))?;
+    if !status.success() {
+        for e in std::fs::read_dir(dest_dir).into_iter().flatten().flatten() {
+            if e.file_name().to_string_lossy().starts_with(&prefix) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+        return Err(if complaint.is_empty() {
+            format!("The downloader failed ({status}).")
+        } else {
+            friendly_ytdlp_error(&complaint)
+        });
+    }
+
+    // Find what it wrote (<prefix>.<ext>) and give it the real title.
+    let produced = std::fs::read_dir(dest_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().starts_with(&prefix))
+                .unwrap_or(false)
+        });
+    let produced = produced.ok_or("The downloader produced no file.")?;
+    let ext = produced
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("m4a")
+        .to_string();
+
+    // Clipped downloads are already playable as-is (m4a); anything else gets
+    // normalised by the importer so the library never sees a raw container.
+    let target = import::unique_path(dest_dir, &stem, &ext);
+    std::fs::rename(&produced, &target)
+        .map_err(|e| format!("cannot finish the download: {e}"))?;
+
+    on_progress(1.0, "done");
+    Ok(Imported {
+        name: target
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&stem)
+            .to_string(),
+        duration_secs: if range.is_some() {
+            (range.unwrap().1 - range.unwrap().0).max(0.0)
+        } else if info.duration_secs > 0.0 {
+            info.duration_secs
+        } else {
+            import::duration_of(&target)
+        },
+        path: target.to_string_lossy().to_string(),
+    })
+}
+
+/// `[download]  42.3% of ...` → 42.3
+pub fn parse_ytdlp_percent(line: &str) -> Option<f32> {
+    let rest = line.split_once("[download]")?.1.trim_start();
+    let pct = rest.split_once('%')?.0.trim();
+    pct.parse::<f32>().ok()
+}
+
+/// Fetch the downloader itself into `<app data>/tools` (17–39 MB, once).
+pub fn ensure_ytdlp(on_progress: &mut dyn FnMut(f32, &str)) -> Result<String, String> {
+    let dir = TOOLS_DIR
+        .get()
+        .cloned()
+        .ok_or("no tools directory configured")?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+
+    let asset = if cfg!(target_os = "windows") {
+        "yt-dlp.exe"
+    } else if cfg!(target_os = "macos") {
+        "yt-dlp_macos"
+    } else if cfg!(target_arch = "aarch64") {
+        "yt-dlp_linux_aarch64"
+    } else {
+        "yt-dlp_linux"
+    };
+    let url =
+        format!("https://github.com/yt-dlp/yt-dlp/releases/latest/download/{asset}");
+    let target = dir.join(tool_exe("yt-dlp"));
+    let part = target.with_extension("part");
+
+    on_progress(0.0, "downloading the downloader");
+    let mut resp = reqwest::blocking::Client::builder()
+        .user_agent(concat!("Kakiri/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| e.to_string())?
+        .get(&url)
+        .send()
+        .map_err(|e| format!("cannot reach GitHub: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub answered {}", resp.status().as_u16()));
+    }
+    let total = resp.content_length().unwrap_or(0);
+    let mut file =
+        std::fs::File::create(&part).map_err(|e| format!("cannot write {}: {e}", part.display()))?;
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut got = 0u64;
+    loop {
+        let n = resp.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        got += n as u64;
+        file.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+        if total > 0 {
+            on_progress((got as f32 / total as f32).clamp(0.0, 0.99), "downloading the downloader");
+        }
+    }
+    drop(file);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&part, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("cannot make it executable: {e}"))?;
+    }
+    std::fs::rename(&part, &target).map_err(|e| format!("cannot install it: {e}"))?;
+
+    let version = version_of(&target).ok_or_else(|| {
+        let _ = std::fs::remove_file(&target);
+        "The downloaded file does not run (wrong platform?).".to_string()
+    })?;
+    on_progress(1.0, "done");
+    Ok(version)
 }
 
 /// Where URL downloads are allowed to land: an existing directory that the user

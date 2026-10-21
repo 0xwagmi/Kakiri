@@ -33,6 +33,13 @@
   let hovering = false;
   let seq = 0;
   let ffmpeg = true;
+  let ytdlp: string | null = null;
+  let probing = false;
+  let probe: { title: string; duration_secs: number } | null = null;
+  let probeError = "";
+  let clipOn = false;
+  let clipFrom = "0:00";
+  let clipTo = "";
   let extraFolder = ""; // created on demand when the library is still empty
 
   const base = (p: string) => p.split(/[\\/]/).pop() ?? p;
@@ -73,19 +80,91 @@
   async function importUrl() {
     const link = url.trim();
     if (!link) return;
-    const job = addJob(link.replace(/^https?:\/\//, "").slice(0, 48));
+    const from = clipOn ? parseClock(clipFrom) : null;
+    const to = clipOn ? parseClock(clipTo) : null;
+    if (clipOn && (from == null || to == null || to <= from)) {
+      probeError = "The clip range looks wrong — use m:ss, with the end after the start.";
+      return;
+    }
+    const job = addJob(
+      clipOn
+        ? `${probe?.title ?? link} (${fmtClock(from!)}–${fmtClock(to!)})`.slice(0, 48)
+        : (probe?.title ?? link.replace(/^https?:\/\//, "")).slice(0, 48),
+    );
     url = "";
+    probe = null;
     try {
       const got = await invoke<Imported>("import_url", {
         job: job.id,
         url: link,
         dest: destination,
+        start: clipOn ? from : null,
+        end: clipOn ? to : null,
       });
       settle(job.id, { state: "done", pct: 1, stage: "done" });
       onDone(got);
     } catch (e) {
       settle(job.id, { state: "error", stage: "", error: String(e) });
     }
+  }
+
+  const fmtClock = (t: number) => {
+    const m = Math.floor(t / 60);
+    const sec = Math.floor(t % 60);
+    return `${m}:${String(sec).padStart(2, "0")}`;
+  };
+
+  /** "1:05" / "65" / "1:05.5" → seconds */
+  function parseClock(text: string): number | null {
+    const t = text.trim();
+    if (!t) return null;
+    const parts = t.split(":");
+    if (parts.length > 2) return null;
+    const nums = parts.map((p) => Number(p.replace(",", ".")));
+    if (nums.some((n) => !Number.isFinite(n) || n < 0)) return null;
+    return parts.length === 2 ? nums[0] * 60 + nums[1] : nums[0];
+  }
+
+  async function doProbe() {
+    const link = url.trim();
+    probe = null;
+    probeError = "";
+    if (!link || !ytdlp) return;
+    probing = true;
+    try {
+      const info = await invoke<{ title: string; duration_secs: number }>("import_probe", { url: link });
+      probe = info;
+      // Default to a short drop rather than the whole track — that is what a
+      // soundboard wants, and "whole file" is one untick away.
+      clipOn = info.duration_secs > 30;
+      if (info.duration_secs > 0) clipTo = fmtClock(Math.min(15, info.duration_secs));
+    } catch (e) {
+      probeError = String(e);
+    } finally {
+      probing = false;
+    }
+  }
+
+  async function setupDownloader() {
+    ytdlp = null;
+    probeError = "";
+    const job = addJob("Downloader (yt-dlp)");
+    try {
+      const version = await invoke<string>("import_ensure_ytdlp", { job: job.id });
+      ytdlp = version;
+      settle(job.id, { state: "done", pct: 1, stage: "done" });
+      flashLink("Downloader installed — paste the link again.");
+    } catch (e) {
+      settle(job.id, { state: "error", stage: "", error: String(e) });
+    }
+  }
+
+  let linkNote = "";
+  function flashLink(msg: string) {
+    linkNote = msg;
+    setTimeout(() => {
+      if (linkNote === msg) linkNote = "";
+    }, 4000);
   }
 
   async function pickFiles() {
@@ -128,8 +207,11 @@
     } catch {
       /* not inside Tauri (plain browser preview) */
     }
-    invoke<{ ffmpeg: boolean }>("import_tools")
-      .then((t) => (ffmpeg = t.ffmpeg))
+    invoke<{ ffmpeg: boolean; ytdlp: string | null }>("import_tools")
+      .then((t) => {
+        ffmpeg = t.ffmpeg;
+        ytdlp = t.ytdlp;
+      })
       .catch(() => {});
     if (!dest && !folders.length) {
       invoke<string>("import_default_folder")
@@ -198,17 +280,61 @@
       <div class="row">
         <input
           class="url"
-          placeholder="https://example.com/sound.mp3"
+          placeholder="Paste a sound or video link (mp3, mp4, YouTube, TikTok…)"
           bind:value={url}
-          onkeydown={(e) => e.key === "Enter" && importUrl()}
+          onkeydown={(e) => e.key === "Enter" && (probe ? importUrl() : doProbe())}
+          oninput={() => {
+            probe = null;
+            probeError = "";
+          }}
         />
         <button class="primary" onclick={importUrl} disabled={!url.trim()}>
           <Download size={13} /> Get
         </button>
       </div>
-      <p class="hint">
-        Direct links to an audio (or video) file. Pages like YouTube are not supported yet.
-      </p>
+
+      {#if probing}
+        <p class="hint">Looking the link up…</p>
+      {:else if probe}
+        <div class="found">
+          <div class="ftitle" title={probe.title}>{probe.title}</div>
+          <div class="fsub">{probe.duration_secs > 0 ? fmtClock(probe.duration_secs) : "unknown length"}</div>
+        </div>
+        {#if probe.duration_secs > 30}
+          <label class="clip">
+            <input type="checkbox" bind:checked={clipOn} />
+            <span>Only take a clip</span>
+            <input class="t" bind:value={clipFrom} placeholder="0:00" disabled={!clipOn} />
+            <span class="dash">→</span>
+            <input class="t" bind:value={clipTo} placeholder="0:10" disabled={!clipOn} />
+          </label>
+          {#if clipOn && !ffmpeg}
+            <p class="warn"><TriangleAlert size={13} /> Cutting a clip needs ffmpeg.</p>
+          {/if}
+        {/if}
+      {:else if url.trim() && ytdlp}
+        <button class="peek" onclick={doProbe}>Look it up first</button>
+      {/if}
+
+      {#if probeError}
+        <p class="warn"><TriangleAlert size={13} /> {probeError}</p>
+      {/if}
+
+      {#if linkNote}
+        <p class="hint">{linkNote}</p>
+      {/if}
+
+      {#if !ytdlp}
+        <div class="need-tool">
+          <span>
+            <b>Page links need the downloader.</b>
+            One-time 17–39 MB download (yt-dlp) — turns YouTube/TikTok links into audio.
+          </span>
+          <button class="primary small" onclick={setupDownloader}>Set up</button>
+        </div>
+      {:else}
+        <p class="hint">Downloader {ytdlp}. Direct audio/video file links work without it.</p>
+      {/if}
     {/if}
 
     <label class="dest">
@@ -358,6 +484,54 @@
   }
   .primary:disabled { opacity: 0.45; cursor: default; }
   .hint { color: var(--muted); font-size: 11px; margin: 7px 2px 0; }
+
+  .found {
+    margin-top: 8px;
+    padding: 7px 9px;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--accent) 10%, var(--panel-2));
+  }
+  .ftitle { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fsub { font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+  .clip { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 11px; color: var(--text-2); }
+  .clip input[type="checkbox"] { accent-color: var(--accent); }
+  .clip .t {
+    width: 52px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--text);
+    font-size: 11px;
+    padding: 3px 6px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .clip .t:disabled { opacity: 0.4; }
+  .dash { color: var(--muted); }
+  .peek {
+    margin-top: 7px;
+    border: 0;
+    background: none;
+    color: var(--accent-2, var(--accent));
+    font-size: 11px;
+    cursor: pointer;
+    padding: 0;
+  }
+  .peek:hover { text-decoration: underline; }
+  .need-tool {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+    padding: 9px 10px;
+    border-radius: 8px;
+    background: var(--panel-2);
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.45;
+  }
+  .need-tool b { color: var(--text-2); font-weight: 550; }
+  .primary.small { padding: 5px 12px; flex: none; }
   .warn {
     display: flex;
     gap: 6px;

@@ -47,7 +47,7 @@ fn downloads_an_audio_file_and_names_it_from_the_url() {
     let base = serve(1, "200 OK", "audio/mpeg", body.clone());
 
     let mut seen: Vec<f32> = Vec::new();
-    let got = download::fetch(&format!("{base}/sounds/My%20Drop.mp3"), &dir, &mut |pct, _| {
+    let got = download::fetch(&format!("{base}/sounds/My%20Drop.mp3"), &dir, None, &mut |pct, _| {
         seen.push(pct)
     })
     .expect("fetch");
@@ -70,7 +70,7 @@ fn downloads_an_audio_file_and_names_it_from_the_url() {
 fn a_missing_extension_is_recovered_from_the_content_type() {
     let dir = temp_dir("ctype");
     let base = serve(1, "200 OK", "audio/mp4", vec![0u8; 2048]);
-    let got = download::fetch(&format!("{base}/stream?id=99"), &dir, &mut |_, _| {}).expect("fetch");
+    let got = download::fetch_direct(&format!("{base}/stream?id=99"), &dir, &mut |_, _| {}).expect("fetch");
     assert!(got.path.ends_with(".m4a"), "{}", got.path);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -84,7 +84,7 @@ fn a_web_page_is_reported_as_such_instead_of_saved() {
         "text/html; charset=utf-8",
         b"<!doctype html><html>hi</html>".to_vec(),
     );
-    let err = download::fetch(&format!("{base}/watch?v=abc"), &dir, &mut |_, _| {}).unwrap_err();
+    let err = download::fetch_direct(&format!("{base}/watch?v=abc"), &dir, &mut |_, _| {}).unwrap_err();
     assert!(err.contains("web page"), "{err}");
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "nothing saved");
     let _ = std::fs::remove_dir_all(&dir);
@@ -94,8 +94,40 @@ fn a_web_page_is_reported_as_such_instead_of_saved() {
 fn http_errors_surface_the_status_code() {
     let dir = temp_dir("404");
     let base = serve(1, "404 Not Found", "text/plain", b"nope".to_vec());
-    let err = download::fetch(&format!("{base}/gone.mp3"), &dir, &mut |_, _| {}).unwrap_err();
+    let err = download::fetch_direct(&format!("{base}/gone.mp3"), &dir, &mut |_, _| {}).unwrap_err();
     assert!(err.contains("404"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn progress_percentages_are_parsed_from_the_downloader_output() {
+    // the shapes yt-dlp actually prints
+    assert_eq!(
+        download::parse_ytdlp_percent("[download]  42.3% of  5.00MiB at 1.20MiB/s ETA 00:03"),
+        Some(42.3)
+    );
+    assert_eq!(download::parse_ytdlp_percent("[download] 100% of 655.71KiB"), Some(100.0));
+    assert_eq!(download::parse_ytdlp_percent("[youtube] extracting URL"), None);
+    assert_eq!(download::parse_ytdlp_percent("WARNING: something"), None);
+}
+
+#[test]
+fn a_file_link_is_recognised_by_its_extension_without_asking_the_server() {
+    // .mp3 → straight to the file path, no downloader involved
+    let dir = temp_dir("route-file");
+    let body = vec![0x42u8; 4096];
+    let base = serve(1, "200 OK", "audio/mpeg", body);
+    let got = download::fetch(&format!("{base}/drop.mp3"), &dir, None, &mut |_, _| {}).expect("fetch");
+    assert!(got.path.ends_with("drop.mp3"), "{}", got.path);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_clip_range_without_a_downloader_says_so() {
+    let dir = temp_dir("range");
+    let err = download::fetch("http://127.0.0.1:1/x.mp3", &dir, Some((1.0, 2.0)), &mut |_, _| {})
+        .unwrap_err();
+    assert!(err.contains("yt-dlp"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

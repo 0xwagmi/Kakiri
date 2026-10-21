@@ -489,12 +489,15 @@ async fn timeline_length(
 #[derive(serde::Serialize)]
 struct ImportTools {
     ffmpeg: bool,
+    /// yt-dlp version when one is available, for page links.
+    ytdlp: Option<String>,
 }
 
 #[tauri::command]
 fn import_tools() -> ImportTools {
     ImportTools {
         ffmpeg: audio_core::import::ffmpeg().is_some(),
+        ytdlp: download::ytdlp().map(|(_, v)| v),
     }
 }
 
@@ -549,12 +552,41 @@ async fn import_url(
     job: String,
     url: String,
     dest: String,
+    start: Option<f64>,
+    end: Option<f64>,
 ) -> Result<audio_core::import::Imported, String> {
     let dest_dir = download::ensure_dest(&dest)?;
+    let range = match (start, end) {
+        (Some(a), Some(b)) if b > a => Some((a.max(0.0), b)),
+        _ => None,
+    };
     let app2 = app.clone();
     let job2 = job.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        download::fetch(&url, &dest_dir, &mut |pct, stage| {
+        download::fetch(&url, &dest_dir, range, &mut |pct, stage| {
+            emit_progress(&app2, &job2, pct, stage);
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Metadata for a link before downloading it (title + duration), so the panel
+/// can show what it found and offer a clip range.
+#[tauri::command]
+async fn import_probe(url: String) -> Result<download::PageInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || download::probe_page(&url))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Install (or refresh) the downloader used for page links.
+#[tauri::command]
+async fn import_ensure_ytdlp(app: tauri::AppHandle, job: String) -> Result<String, String> {
+    let app2 = app.clone();
+    let job2 = job.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        download::ensure_ytdlp(&mut |pct, stage| {
             emit_progress(&app2, &job2, pct, stage);
         })
     })
@@ -619,6 +651,10 @@ pub fn run() {
         )
         .setup(|app| {
             use tauri::Manager;
+            // Where a downloader fetched by the import panel lives.
+            if let Ok(dir) = app.path().app_local_data_dir() {
+                download::set_tools_dir(dir.join("tools"));
+            }
             let fmt = BusFormat::default();
             // Bring the virtual mic up (the drop-in already did, if installed);
             // never block startup waiting for it.
@@ -663,6 +699,8 @@ pub fn run() {
             timeline_set_loop,
             import_tools,
             import_default_folder,
+            import_probe,
+            import_ensure_ytdlp,
             import_file,
             import_url,
             clear_cache,
