@@ -47,7 +47,7 @@ fn downloads_an_audio_file_and_names_it_from_the_url() {
     let base = serve(1, "200 OK", "audio/mpeg", body.clone());
 
     let mut seen: Vec<f32> = Vec::new();
-    let got = download::fetch(&format!("{base}/sounds/My%20Drop.mp3"), &dir, None, &mut |pct, _| {
+    let got = download::fetch("test", &format!("{base}/sounds/My%20Drop.mp3"), &dir, None, &mut |pct, _| {
         seen.push(pct)
     })
     .expect("fetch");
@@ -100,6 +100,15 @@ fn http_errors_surface_the_status_code() {
 }
 
 #[test]
+fn a_year_old_downloader_is_flagged_as_stale() {
+    // yt-dlp versions are release dates, so age is directly computable
+    assert!(download::is_stale("2024.01.01"));
+    assert!(!download::is_stale("2999.01.01"), "far future is not stale");
+    assert!(download::is_stale("2025.08.11"), "the copy that broke on YouTube");
+    assert!(!download::is_stale("garbage"));
+}
+
+#[test]
 fn progress_percentages_are_parsed_from_the_downloader_output() {
     // the shapes yt-dlp actually prints
     assert_eq!(
@@ -117,7 +126,7 @@ fn a_file_link_is_recognised_by_its_extension_without_asking_the_server() {
     let dir = temp_dir("route-file");
     let body = vec![0x42u8; 4096];
     let base = serve(1, "200 OK", "audio/mpeg", body);
-    let got = download::fetch(&format!("{base}/drop.mp3"), &dir, None, &mut |_, _| {}).expect("fetch");
+    let got = download::fetch("test", &format!("{base}/drop.mp3"), &dir, None, &mut |_, _| {}).expect("fetch");
     assert!(got.path.ends_with("drop.mp3"), "{}", got.path);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -125,7 +134,7 @@ fn a_file_link_is_recognised_by_its_extension_without_asking_the_server() {
 #[test]
 fn a_clip_range_without_a_downloader_says_so() {
     let dir = temp_dir("range");
-    let err = download::fetch("http://127.0.0.1:1/x.mp3", &dir, Some((1.0, 2.0)), &mut |_, _| {})
+    let err = download::fetch("test", "http://127.0.0.1:1/x.mp3", &dir, Some((1.0, 2.0)), &mut |_, _| {})
         .unwrap_err();
     assert!(err.contains("yt-dlp"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);

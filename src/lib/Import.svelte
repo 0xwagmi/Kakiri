@@ -34,6 +34,8 @@
   let seq = 0;
   let ffmpeg = true;
   let ytdlp: string | null = null;
+  let ytdlpStale = false;
+  let updating = false;
   let probing = false;
   let probe: { title: string; duration_secs: number } | null = null;
   let probeError = "";
@@ -146,16 +148,27 @@
   }
 
   async function setupDownloader() {
-    ytdlp = null;
     probeError = "";
-    const job = addJob("Downloader (yt-dlp)");
+    updating = true;
+    const job = addJob(ytdlp ? `Downloader update (was ${ytdlp})` : "Downloader (yt-dlp)");
     try {
       const version = await invoke<string>("import_ensure_ytdlp", { job: job.id });
       ytdlp = version;
+      ytdlpStale = false;
       settle(job.id, { state: "done", pct: 1, stage: "done" });
-      flashLink("Downloader installed — paste the link again.");
+      flashLink(`Downloader ${version} ready — paste the link again.`);
     } catch (e) {
       settle(job.id, { state: "error", stage: "", error: String(e) });
+    } finally {
+      updating = false;
+    }
+  }
+
+  async function cancelJob(job: Job) {
+    try {
+      await invoke("import_cancel", { job: job.id });
+    } catch {
+      /* already gone */
     }
   }
 
@@ -207,10 +220,11 @@
     } catch {
       /* not inside Tauri (plain browser preview) */
     }
-    invoke<{ ffmpeg: boolean; ytdlp: string | null }>("import_tools")
+    invoke<{ ffmpeg: boolean; ytdlp: string | null; ytdlp_stale: boolean }>("import_tools")
       .then((t) => {
         ffmpeg = t.ffmpeg;
         ytdlp = t.ytdlp;
+        ytdlpStale = t.ytdlp_stale;
       })
       .catch(() => {});
     if (!dest && !folders.length) {
@@ -330,10 +344,21 @@
             <b>Page links need the downloader.</b>
             One-time 17–39 MB download (yt-dlp) — turns YouTube/TikTok links into audio.
           </span>
-          <button class="primary small" onclick={setupDownloader}>Set up</button>
+          <button class="primary small" onclick={setupDownloader} disabled={updating}>Set up</button>
+        </div>
+      {:else if ytdlpStale}
+        <div class="need-tool warnrow">
+          <span>
+            <b>Downloader {ytdlp} is out of date.</b>
+            Sites change constantly — YouTube and TikTok links usually fail on an old copy.
+          </span>
+          <button class="primary small" onclick={setupDownloader} disabled={updating}>Update</button>
         </div>
       {:else}
-        <p class="hint">Downloader {ytdlp}. Direct audio/video file links work without it.</p>
+        <p class="hint">
+          Downloader {ytdlp}. Direct audio/video file links work without it.
+          <button class="linkish" onclick={setupDownloader} disabled={updating}>update</button>
+        </p>
       {/if}
     {/if}
 
@@ -361,13 +386,23 @@
               {:else if j.state === "error"}
                 <TriangleAlert size={13} />
               {:else}
-                <span class="pct">{j.pct < 0 ? j.stage : `${Math.round(j.pct * 100)}%`}</span>
+                <span class="pct">
+                  {j.pct < 0 || j.pct === 0 ? j.stage : `${Math.round(j.pct * 100)}%`}
+                </span>
               {/if}
             </div>
             {#if j.state === "running"}
               <div class="bar"><i style="width:{j.pct < 0 ? 100 : j.pct * 100}%;opacity:{j.pct < 0 ? 0.35 : 1}"></i></div>
+              <button class="stop" onclick={() => cancelJob(j)}>Cancel</button>
             {/if}
-            {#if j.error}<p class="jerr">{j.error}</p>{/if}
+            {#if j.error}
+              <p class="jerr">{j.error}</p>
+              {#if /out of date|refused the download/i.test(j.error) && ytdlp}
+                <button class="primary small fix" onclick={setupDownloader} disabled={updating}>
+                  Update downloader
+                </button>
+              {/if}
+            {/if}
           </li>
         {/each}
       </ul>
@@ -572,6 +607,29 @@
   .bar { height: 3px; border-radius: 2px; background: var(--panel-3); margin-top: 6px; overflow: hidden; }
   .bar i { display: block; height: 100%; background: var(--accent); transition: width 0.15s linear; }
   .jerr { margin: 5px 0 0; font-size: 10.5px; color: var(--danger, #f85149); line-height: 1.4; }
+  .stop {
+    margin-top: 5px;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font-size: 10.5px;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: underline;
+  }
+  .stop:hover { color: var(--danger, #f85149); }
+  .linkish {
+    border: 0;
+    background: none;
+    color: var(--accent-2, var(--accent));
+    font-size: 11px;
+    cursor: pointer;
+    padding: 0 0 0 2px;
+  }
+  .linkish:hover { text-decoration: underline; }
+  .fix { margin-top: 7px; padding: 4px 10px; }
+  .warnrow { background: color-mix(in srgb, var(--warn, #d8a13a) 14%, var(--panel-2)); }
+  .warnrow b { color: var(--text); }
   .ok .jname { color: var(--text); }
 
   footer {

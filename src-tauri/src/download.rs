@@ -15,6 +15,64 @@ use audio_core::import::{self, Imported};
 
 const MAX_BYTES: u64 = 512 * 1024 * 1024; // 512 MB is plenty for a sound
 
+/// Jobs that currently own a child process, so the UI can cancel them.
+static RUNNING: std::sync::Mutex<Vec<(String, u32)>> = std::sync::Mutex::new(Vec::new());
+
+fn register(job: &str, pid: u32) {
+    if job.is_empty() {
+        return;
+    }
+    let mut r = RUNNING.lock().unwrap();
+    r.retain(|(j, _)| j != job);
+    r.push((job.to_string(), pid));
+}
+
+fn unregister(job: &str) {
+    if job.is_empty() {
+        return;
+    }
+    RUNNING.lock().unwrap().retain(|(j, _)| j != job);
+}
+
+/// Jobs cancelled by the UI (used by downloads that have no child process).
+static CANCELLED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn clear_cancel(job: &str) {
+    CANCELLED.lock().unwrap().retain(|j| j != job);
+}
+
+fn is_cancelled(job: &str) -> bool {
+    CANCELLED.lock().unwrap().iter().any(|j| j == job)
+}
+
+/// Kill whatever `job` is doing. Returns true when something was running.
+pub fn cancel(job: &str) -> bool {
+    // remember it, so a request-based download can stop at its next chunk
+    {
+        let mut c = CANCELLED.lock().unwrap();
+        if !c.iter().any(|j| j == job) {
+            c.push(job.to_string());
+        }
+    }
+    let pid = {
+        let r = RUNNING.lock().unwrap();
+        r.iter().find(|(j, _)| j == job).map(|(_, p)| *p)
+    };
+    let Some(pid) = pid else { return true };
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("kill").arg(pid.to_string()).output();
+    }
+    unregister(job);
+    true
+}
+
 /// Where a downloader we fetched ourselves lives (`<app data>/tools`).
 static TOOLS_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
@@ -89,8 +147,7 @@ fn friendly_ytdlp_error(raw: &str) -> String {
         return "The downloader doesn't recognise that site.".into();
     }
     if low.contains("not available on this app") || low.contains("sign in to confirm") {
-        return "The site refused the download — the downloader is probably out of date.                 Update it in Settings and try again."
-            .into();
+        return "The site refused the download — the downloader is out of date.".into();
     }
     if low.contains("requested format is not available") {
         return "That video has no audio-only stream the downloader can fetch.".into();
@@ -174,6 +231,7 @@ fn kind_from_content_type(ctype: &str) -> Option<&'static str> {
 /// One link in, a playable file out — direct media links go straight down,
 /// page links (YouTube/TikTok/…) go through yt-dlp.
 pub fn fetch(
+    job: &str,
     url: &str,
     dest_dir: &Path,
     range: Option<(f64, f64)>,
@@ -195,7 +253,7 @@ pub fn fetch(
 
     if page {
         if ytdlp().is_some() {
-            return fetch_ytdlp(trimmed, dest_dir, range, on_progress);
+            return fetch_ytdlp(job, trimmed, dest_dir, range, on_progress);
         }
         if range.is_some() {
             return Err("Cutting a clip needs the downloader (yt-dlp) and ffmpeg.".into());
@@ -373,12 +431,26 @@ pub struct PageInfo {
 
 /// Read a page's metadata without downloading it (also validates the link).
 pub fn probe_page(url: &str) -> Result<PageInfo, String> {
+    probe_page_job("", url)
+}
+
+fn probe_page_job(job: &str, url: &str) -> Result<PageInfo, String> {
     let (exe, _) = ytdlp().ok_or_else(|| MISSING_YTDLP.to_string())?;
-    let out = std::process::Command::new(&exe)
-        .args(["-J", "--no-playlist", "--no-warnings", url])
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.args(["-J", "--no-playlist", "--no-warnings", url])
         .stdin(std::process::Stdio::null())
-        .output()
+        // both pipes must be captured: without this the child inherits ours,
+        // its output lands in the app's console and the error text is lost
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = cmd
+        .spawn()
         .map_err(|e| format!("cannot run the downloader: {e}"))?;
+    register(job, child.id());
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("cannot run the downloader: {e}"))?;
+    unregister(job);
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         let line = err
@@ -405,6 +477,7 @@ pub const MISSING_YTDLP: &str =
 
 /// Download a page link's audio into `dest_dir`, optionally just a slice.
 pub fn fetch_ytdlp(
+    job: &str,
     url: &str,
     dest_dir: &Path,
     range: Option<(f64, f64)>,
@@ -414,8 +487,8 @@ pub fn fetch_ytdlp(
     std::fs::create_dir_all(dest_dir)
         .map_err(|e| format!("cannot create {}: {e}", dest_dir.display()))?;
 
-    on_progress(0.0, "reading the page");
-    let info = probe_page(url)?;
+    on_progress(-1.0, "reading the page");
+    let info = probe_page_job(job, url)?;
     if range.is_some() && import::ffmpeg().is_none() {
         return Err("Cutting a clip needs ffmpeg installed.".into());
     }
@@ -450,6 +523,7 @@ pub fn fetch_ytdlp(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("cannot run the downloader: {e}"))?;
+    register(job, child.id());
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     if let Some(out) = child.stdout.take() {
         pump(out, tx.clone());
@@ -472,6 +546,7 @@ pub fn fetch_ytdlp(
     }
 
     let status = child.wait().map_err(|e| format!("downloader: {e}"))?;
+    unregister(job);
     if !status.success() {
         for e in std::fs::read_dir(dest_dir).into_iter().flatten().flatten() {
             if e.file_name().to_string_lossy().starts_with(&prefix) {
@@ -527,6 +602,41 @@ pub fn fetch_ytdlp(
     })
 }
 
+/// Days since 1970-01-01 for a civil date (Howard Hinnant's algorithm).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// How old a `YYYY.MM.DD` version string is, in days.
+fn version_age_days(version: &str) -> Option<i64> {
+    let date = version.split('.').take(3).collect::<Vec<_>>();
+    if date.len() < 3 {
+        return None;
+    }
+    let y: i64 = date[0].parse().ok()?;
+    let m: i64 = date[1].parse().ok()?;
+    let d: i64 = date[2].parse().ok()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64
+        / 86_400;
+    Some(now - days_from_civil(y, m, d))
+}
+
+/// These sites change constantly; anything older than this is a liability.
+const STALE_AFTER_DAYS: i64 = 120;
+
+pub fn is_stale(version: &str) -> bool {
+    version_age_days(version).is_some_and(|age| age > STALE_AFTER_DAYS)
+}
+
 /// `[download]  42.3% of ...` → 42.3
 pub fn parse_ytdlp_percent(line: &str) -> Option<f32> {
     let rest = line.split_once("[download]")?.1.trim_start();
@@ -534,8 +644,28 @@ pub fn parse_ytdlp_percent(line: &str) -> Option<f32> {
     pct.parse::<f32>().ok()
 }
 
+/// What the import panel needs to know about its helper tools.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Tools {
+    pub ffmpeg: bool,
+    pub ytdlp: Option<String>,
+    /// True when the downloader exists but is old enough to be untrustworthy.
+    pub ytdlp_stale: bool,
+}
+
+pub fn tools() -> Tools {
+    let ytdlp = ytdlp();
+    Tools {
+        ffmpeg: import::ffmpeg().is_some(),
+        ytdlp_stale: ytdlp.as_ref().map(|(_, v)| is_stale(v)).unwrap_or(false),
+        ytdlp: ytdlp.map(|(_, v)| v),
+    }
+}
+
 /// Fetch the downloader itself into `<app data>/tools` (17–39 MB, once).
-pub fn ensure_ytdlp(on_progress: &mut dyn FnMut(f32, &str)) -> Result<String, String> {
+pub fn ensure_ytdlp(job: &str, on_progress: &mut dyn FnMut(f32, &str)) -> Result<String, String> {
+    // No child process here, so cancellation is a flag the copy loop checks.
+    clear_cancel(job);
     let dir = TOOLS_DIR
         .get()
         .cloned()
@@ -576,6 +706,11 @@ pub fn ensure_ytdlp(on_progress: &mut dyn FnMut(f32, &str)) -> Result<String, St
         let n = resp.read(&mut buf).map_err(|e| e.to_string())?;
         if n == 0 {
             break;
+        }
+        if is_cancelled(job) {
+            drop(file);
+            let _ = std::fs::remove_file(&part);
+            return Err("Cancelled.".into());
         }
         got += n as u64;
         file.write_all(&buf[..n]).map_err(|e| e.to_string())?;

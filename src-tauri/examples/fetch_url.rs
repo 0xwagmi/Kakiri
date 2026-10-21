@@ -11,16 +11,18 @@ fn main() {
         (Some(a), Some(b)) => Some((a.parse().unwrap_or(0.0), b.parse().unwrap_or(0.0))),
         _ => None,
     };
-    download::set_tools_dir(PathBuf::from("/tmp/kakiri-tools"));
+    let dir = std::env::var("KAKIRI_TOOLS").unwrap_or_else(|_| "/tmp/kakiri-tools".into());
+    download::set_tools_dir(PathBuf::from(dir));
 
     match download::ytdlp() {
         Some((p, v)) => println!("downloader: {} ({v})", p.display()),
         None => println!("downloader: none found"),
     }
-    let stale = download::ytdlp().map(|(_, v)| v.as_str() < "2026.").unwrap_or(true);
+    let stale = std::env::var("KAKIRI_NO_FETCH").is_err()
+        && download::ytdlp().map(|(_, v)| v.as_str() < "2026.").unwrap_or(true);
     if stale {
         println!("fetching latest yt-dlp…");
-        match download::ensure_ytdlp(&mut |pct, _| {
+        match download::ensure_ytdlp("tool", &mut |pct, _| {
             if pct >= 1.0 || (pct * 10.0) as i32 != ((pct - 0.05) * 10.0) as i32 {
                 println!("  tool {:.0}%", pct * 100.0);
             }
@@ -36,7 +38,7 @@ fn main() {
         Ok(i) => println!("probe: \"{}\" ({:.1}s)", i.title, i.duration_secs),
         Err(e) => println!("probe failed: {e}"),
     }
-    let got = download::fetch(&url, std::path::Path::new(&dest), range, &mut |pct, stage| {
+    let got = download::fetch("job", &url, std::path::Path::new(&dest), range, &mut |pct, stage| {
         if pct >= 1.0 || (pct >= 0.0 && (pct * 20.0) as i32 % 5 == 0) {
             println!("  {stage} {:.0}%", pct * 100.0);
         }

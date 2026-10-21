@@ -486,19 +486,15 @@ async fn timeline_length(
 }
 
 /// What the import UI can offer (ffmpeg is only needed for video files).
-#[derive(serde::Serialize)]
-struct ImportTools {
-    ffmpeg: bool,
-    /// yt-dlp version when one is available, for page links.
-    ytdlp: Option<String>,
+#[tauri::command]
+fn import_tools() -> download::Tools {
+    download::tools()
 }
 
+/// Stop whatever a job is doing (a stalled downloader, a huge video).
 #[tauri::command]
-fn import_tools() -> ImportTools {
-    ImportTools {
-        ffmpeg: audio_core::import::ffmpeg().is_some(),
-        ytdlp: download::ytdlp().map(|(_, v)| v),
-    }
+fn import_cancel(job: String) -> bool {
+    download::cancel(&job)
 }
 
 /// Progress for one import job, mirrored to a bar in the UI.
@@ -563,7 +559,7 @@ async fn import_url(
     let app2 = app.clone();
     let job2 = job.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        download::fetch(&url, &dest_dir, range, &mut |pct, stage| {
+        download::fetch(&job2, &url, &dest_dir, range, &mut |pct, stage| {
             emit_progress(&app2, &job2, pct, stage);
         })
     })
@@ -586,7 +582,7 @@ async fn import_ensure_ytdlp(app: tauri::AppHandle, job: String) -> Result<Strin
     let app2 = app.clone();
     let job2 = job.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        download::ensure_ytdlp(&mut |pct, stage| {
+        download::ensure_ytdlp(&job2, &mut |pct, stage| {
             emit_progress(&app2, &job2, pct, stage);
         })
     })
@@ -701,6 +697,7 @@ pub fn run() {
             import_default_folder,
             import_probe,
             import_ensure_ytdlp,
+            import_cancel,
             import_file,
             import_url,
             clear_cache,
