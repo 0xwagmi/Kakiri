@@ -3,7 +3,16 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-dialog";
-  import { X, Upload, Link2, Download, Check, TriangleAlert, FileAudio } from "$lib/icons";
+  import {
+    X,
+    Upload,
+    Link2,
+    Download,
+    Check,
+    TriangleAlert,
+    FileAudio,
+    ChevronDown,
+  } from "$lib/icons";
 
   type Imported = { path: string; name: string; duration_secs: number };
 
@@ -364,15 +373,18 @@
 
     <label class="dest">
       <span>Save to</span>
-      <select bind:value={folder}>
-        {#if dest}<option value={dest}>{dest}</option>{/if}
-        {#if extraFolder && extraFolder !== dest}
-          <option value={extraFolder}>{extraFolder}</option>
-        {/if}
-        {#each folders.filter((f) => f !== dest) as f (f)}
-          <option value={f}>{f}</option>
-        {/each}
-      </select>
+      <div class="pick">
+        <select bind:value={folder} title={folder}>
+          {#if dest}<option value={dest}>{dest}</option>{/if}
+          {#if extraFolder && extraFolder !== dest}
+            <option value={extraFolder}>{extraFolder}</option>
+          {/if}
+          {#each folders.filter((f) => f !== dest) as f (f)}
+            <option value={f}>{f}</option>
+          {/each}
+        </select>
+        <span class="chev"><ChevronDown size={12} /></span>
+      </div>
     </label>
 
     {#if jobs.length}
@@ -586,15 +598,35 @@
     font-size: 11px;
     color: var(--muted);
   }
-  .dest select {
-    flex: 1;
+  /* A native select keeps the platform's own look (a white bar on WebKitGTK)
+     unless the appearance is removed and every colour is set explicitly. */
+  .pick { position: relative; flex: 1; min-width: 0; display: flex; }
+  .pick select {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
     min-width: 0;
     background: var(--panel-2);
     color: var(--text-2);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 5px 6px;
+    padding: 5px 24px 5px 8px;
     font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    text-overflow: ellipsis;
+  }
+  .pick select:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+  .pick select:focus { outline: none; border-color: var(--accent); }
+  .pick select option { background: var(--panel-2); color: var(--text-2); }
+  .pick .chev {
+    position: absolute;
+    right: 7px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    color: var(--muted);
+    pointer-events: none;
   }
 
   .jobs { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
