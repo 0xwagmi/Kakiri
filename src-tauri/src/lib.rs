@@ -540,6 +540,37 @@ async fn import_file(
     .map_err(|e| e.to_string())?
 }
 
+/// Re-encode a file that is already in the library but that the mixer can't
+/// decode (HE-AAC and friends), in place, and return what it became.
+#[tauri::command]
+async fn convert_sound(
+    app: tauri::AppHandle,
+    job: String,
+    path: String,
+) -> Result<audio_core::import::Imported, String> {
+    let src = std::path::PathBuf::from(&path);
+    let app2 = app.clone();
+    let job2 = job.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (target, converted) =
+            audio_core::import::ensure_playable(&src, &mut |pct, stage| {
+                emit_progress(&app2, &job2, pct, stage);
+            })?;
+        Ok::<_, String>(audio_core::import::Imported {
+            name: target
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("sound")
+                .to_string(),
+            duration_secs: audio_core::import::duration_of(&target),
+            path: target.to_string_lossy().to_string(),
+            converted,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Download a link into a library folder. Direct audio/video links only; page
 /// URLs (YouTube etc.) will come from yt-dlp.
 #[tauri::command]
@@ -698,6 +729,7 @@ pub fn run() {
             import_probe,
             import_ensure_ytdlp,
             import_cancel,
+            convert_sound,
             import_file,
             import_url,
             clear_cache,

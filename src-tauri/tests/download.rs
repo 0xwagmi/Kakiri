@@ -33,6 +33,33 @@ fn serve(requests: usize, status: &'static str, ctype: &'static str, body: Vec<u
     format!("http://127.0.0.1:{port}")
 }
 
+/// A tiny but genuinely decodable WAV, so the post-download playability check
+/// passes exactly like it would for a real sound.
+fn wav_bytes(secs: f32) -> Vec<u8> {
+    let rate = 8000u32;
+    let frames = (rate as f32 * secs) as u32;
+    let mut data = Vec::new();
+    for i in 0..frames {
+        let v = ((i as f32 * 0.1).sin() * 8000.0) as i16;
+        data.extend_from_slice(&v.to_le_bytes());
+    }
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&rate.to_le_bytes());
+    wav.extend_from_slice(&(rate * 2).to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    wav.extend_from_slice(&data);
+    wav
+}
+
 fn temp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("kakiri-dl-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -43,17 +70,18 @@ fn temp_dir(tag: &str) -> PathBuf {
 #[test]
 fn downloads_an_audio_file_and_names_it_from_the_url() {
     let dir = temp_dir("audio");
-    let body = vec![0x41u8; 4096];
-    let base = serve(1, "200 OK", "audio/mpeg", body.clone());
+    let body = wav_bytes(0.3);
+    let base = serve(1, "200 OK", "audio/wav", body.clone());
 
     let mut seen: Vec<f32> = Vec::new();
-    let got = download::fetch("test", &format!("{base}/sounds/My%20Drop.mp3"), &dir, None, &mut |pct, _| {
+    let got = download::fetch("test", &format!("{base}/sounds/My%20Drop.wav"), &dir, None, &mut |pct, _| {
         seen.push(pct)
     })
     .expect("fetch");
 
     assert_eq!(got.name, "My Drop");
-    assert!(got.path.ends_with("My Drop.mp3"), "{}", got.path);
+    assert!(got.path.ends_with("My Drop.wav"), "{}", got.path);
+    assert!(!got.converted, "a playable download is kept as-is");
     assert_eq!(std::fs::read(&got.path).unwrap().len(), body.len());
     // no leftover .part file, and progress ran to completion
     let leftovers: Vec<_> = std::fs::read_dir(&dir)
@@ -69,9 +97,12 @@ fn downloads_an_audio_file_and_names_it_from_the_url() {
 #[test]
 fn a_missing_extension_is_recovered_from_the_content_type() {
     let dir = temp_dir("ctype");
-    let base = serve(1, "200 OK", "audio/mp4", vec![0u8; 2048]);
-    let got = download::fetch_direct(&format!("{base}/stream?id=99"), &dir, &mut |_, _| {}).expect("fetch");
-    assert!(got.path.ends_with(".m4a"), "{}", got.path);
+    // no extension → the content type is peeked, then the file is fetched
+    let base = serve(4, "200 OK", "audio/wav", wav_bytes(0.3));
+    let got = download::fetch("test", &format!("{base}/stream?id=99"), &dir, None, &mut |_, _| {})
+        .expect("fetch");
+    assert!(got.path.ends_with(".wav"), "{}", got.path);
+    assert!(!got.converted);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -124,10 +155,10 @@ fn progress_percentages_are_parsed_from_the_downloader_output() {
 fn a_file_link_is_recognised_by_its_extension_without_asking_the_server() {
     // .mp3 → straight to the file path, no downloader involved
     let dir = temp_dir("route-file");
-    let body = vec![0x42u8; 4096];
-    let base = serve(1, "200 OK", "audio/mpeg", body);
-    let got = download::fetch("test", &format!("{base}/drop.mp3"), &dir, None, &mut |_, _| {}).expect("fetch");
-    assert!(got.path.ends_with("drop.mp3"), "{}", got.path);
+    let base = serve(1, "200 OK", "audio/wav", wav_bytes(0.3));
+    let got = download::fetch("test", &format!("{base}/drop.wav"), &dir, None, &mut |_, _| {})
+        .expect("fetch");
+    assert!(got.path.ends_with("drop.wav"), "{}", got.path);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

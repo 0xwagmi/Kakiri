@@ -14,7 +14,7 @@
     ChevronDown,
   } from "$lib/icons";
 
-  type Imported = { path: string; name: string; duration_secs: number };
+  type Imported = { path: string; name: string; duration_secs: number; converted: boolean };
 
   /** Folder new files land in (the library folder being browsed). */
   export let dest = "";

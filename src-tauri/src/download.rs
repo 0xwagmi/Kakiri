@@ -410,6 +410,7 @@ pub fn fetch_direct(url: &str, dest_dir: &Path, on_progress: &mut dyn FnMut(f32,
     }
 
     std::fs::rename(&part, &target).map_err(|e| format!("cannot finish the download: {e}"))?;
+    let (target, converted) = import::ensure_playable(&target, on_progress)?;
     on_progress(1.0, "done");
     Ok(Imported {
         name: target
@@ -419,6 +420,7 @@ pub fn fetch_direct(url: &str, dest_dir: &Path, on_progress: &mut dyn FnMut(f32,
             .to_string(),
         duration_secs: import::duration_of(&target),
         path: target.to_string_lossy().to_string(),
+        converted,
     })
 }
 
@@ -584,6 +586,9 @@ pub fn fetch_ytdlp(
     std::fs::rename(&produced, &target)
         .map_err(|e| format!("cannot finish the download: {e}"))?;
 
+    // A downloaded profile can be one the mixer can't decode (HE-AAC), so the
+    // same repair the importer does applies here.
+    let (target, converted) = import::ensure_playable(&target, on_progress)?;
     on_progress(1.0, "done");
     Ok(Imported {
         name: target
@@ -599,6 +604,7 @@ pub fn fetch_ytdlp(
             import::duration_of(&target)
         },
         path: target.to_string_lossy().to_string(),
+        converted,
     })
 }
 

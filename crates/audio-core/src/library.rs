@@ -133,6 +133,14 @@ mod tests {
         folder.sounds.first().or_else(|| folder.children.iter().find_map(first_sound))
     }
 
+    /// Every sound in the tree, depth first.
+    fn all_sounds<'a>(folder: &'a Folder, out: &mut Vec<&'a Sound>) {
+        out.extend(folder.sounds.iter());
+        for c in &folder.children {
+            all_sounds(c, out);
+        }
+    }
+
     #[test]
     fn scans_real_playlist_when_present() {
         let Some(root) = repo_test_playlist() else {
@@ -141,8 +149,16 @@ mod tests {
         let folders = scan(&[root]);
         let total: usize = folders.iter().map(|f| f.total_sounds).sum();
         assert!(total >= 1, "expected at least one sound in test_playlist");
-        let sound = folders.iter().find_map(first_sound).expect("a sound");
-        assert!(matches!(sound.ext.as_str(), "mp3" | "wav" | "flac" | "ogg"));
+        // Any playable format may be first in the fixture (the folders collect
+        // whatever the user drops in), so check a widely supported one.
+        let mut every = Vec::new();
+        for f in &folders {
+            all_sounds(f, &mut every);
+        }
+        let sound = every
+            .into_iter()
+            .find(|s| matches!(s.ext.as_str(), "mp3" | "wav" | "flac" | "ogg"))
+            .expect("a sound in a common format");
         assert!(
             sound.duration_secs.unwrap_or(0.0) > 1.0,
             "duration should be probed, got {:?}",

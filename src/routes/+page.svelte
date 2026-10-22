@@ -81,13 +81,21 @@
   let pendingFiles: string[] = [];
   let busy = false;
   let toast = "";
+  let toastAction: { label: string; run: () => void } | null = null;
   let poll: ReturnType<typeof setInterval>;
 
-  function flash(msg: string) {
+  function flash(msg: string, action: { label: string; run: () => void } | null = null) {
     toast = msg;
-    setTimeout(() => {
-      if (toast === msg) toast = "";
-    }, 2500);
+    toastAction = action;
+    setTimeout(
+      () => {
+        if (toast === msg) {
+          toast = "";
+          toastAction = null;
+        }
+      },
+      action ? 9000 : 2500,
+    );
   }
 
   function savePrefs() {
@@ -218,8 +226,8 @@
   }
 
   /** A finished import: show it right away by opening its folder. */
-  function onImported(sound: { path: string; name: string }) {
-    flash(`Added ${sound.name}`);
+  function onImported(sound: { path: string; name: string; converted?: boolean }) {
+    flash(sound.converted ? `Added ${sound.name} (converted)` : `Added ${sound.name}`);
     const dir = sound.path.replace(/[\\/][^\\/]+$/, "");
     // Importing into a folder that isn't part of the library yet (the default
     // ~/Music/Kakiri, say) would hide the new sound — adopt it as a root.
@@ -249,6 +257,31 @@
         retrigger,
       });
       if (id == null && retrigger === "toggle") flash(`stopped ${s.name}`);
+    } catch (e) {
+      const msg = String(e);
+      // HE-AAC / AAC-Main and friends: the mixer can't decode them, but ffmpeg
+      // can re-encode a copy that it can.
+      if (/unsupported codec|too complex|unsupported feature|decoder/i.test(msg)) {
+        flash(`${s.name} isn't a format Kakiri can decode.`, {
+          label: "Convert",
+          run: () => void convertAndPlay(s),
+        });
+      } else {
+        flash(msg);
+      }
+    }
+  }
+
+  /** Re-encode an unplayable library file, then play it. */
+  async function convertAndPlay(s: Sound) {
+    try {
+      const got = await invoke<{ path: string; name: string; converted: boolean }>("convert_sound", {
+        job: `convert-${s.id}`,
+        path: s.path,
+      });
+      flash(got.converted ? `Converted ${got.name}` : `${got.name} is fine`);
+      await refreshLibrary();
+      await play({ ...s, path: got.path, name: got.name });
     } catch (e) {
       flash(String(e));
     }
@@ -861,7 +894,22 @@
         <button class="x" onclick={() => stopVoice(v.id)}><X size={12} /></button>
       </span>
     {/each}
-    {#if toast}<span class="toast">{toast}</span>{/if}
+    {#if toast}
+      <span class="toast">
+        {toast}
+        {#if toastAction}
+          <button
+            class="toast-act"
+            onclick={() => {
+              const a = toastAction;
+              toast = "";
+              toastAction = null;
+              a?.run();
+            }}>{toastAction.label}</button
+          >
+        {/if}
+      </span>
+    {/if}
   </footer>
 </main>
 
@@ -1028,6 +1076,23 @@
   .now .lbl { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .now input[type="range"] { width: 72px; flex: none; }
   .now input.gain { width: 54px; flex: none; opacity: .85; }
-  .toast { margin-left: auto; color: var(--ok); font-size: 12px; }
+  .toast {
+    margin-left: auto;
+    color: var(--ok);
+    font-size: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .toast-act {
+    border: 0;
+    border-radius: 5px;
+    padding: 3px 9px;
+    font-size: 11px;
+    color: #fff;
+    background: var(--accent);
+    cursor: pointer;
+  }
+  .toast-act:hover { filter: brightness(1.1); }
   .muted { color: var(--muted); font-size: 12px; }
 </style>
