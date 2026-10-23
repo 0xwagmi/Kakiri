@@ -90,11 +90,40 @@ docs/
   UI.md                wireframes / screen inventory
 ```
 
+## Install (Linux, no sudo)
+
+```bash
+npm install
+./scripts/install.sh --dev     # use the release build already in target/release
+```
+
+That puts a `kakiri` command in `~/.local/bin`, installs the icon in every size
+under `~/.local/share/icons/hicolor`, and adds a menu entry, so Kakiri shows up
+in your application launcher like any other program:
+
+```bash
+kakiri                 # launches the app
+./scripts/uninstall.sh            # removes the command, icon and menu entry
+./scripts/uninstall.sh --purge    # ...and its settings + downloaded tools
+```
+
+`--dev` avoids a rebuild: the app runs the optimised engine from
+`target/release` while a Vite dev server serves the UI, so interface edits
+reload instantly. For a fully standalone install (frontend embedded, nothing but
+the binary — no dev server), drop the flag:
+
+```bash
+./scripts/install.sh           # builds with `tauri build --no-bundle` first
+```
+
 ## Quickstart (dev, Linux)
 
 ```bash
 npm install
-npm run tauri dev          # builds + launches the app
+npm run app                # release engine + hot-reloading UI (scripts/run.sh)
+npm run app:rebuild        # same, after changing Rust code
+npm run serve              # only the Vite server
+npm run tauri dev          # classic debug build, rebuilds on save
 ```
 
 The backend can also be exercised headlessly with the spike CLI:
