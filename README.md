@@ -116,6 +116,12 @@ the binary — no dev server), drop the flag:
 ./scripts/install.sh           # builds with `tauri build --no-bundle` first
 ```
 
+That build embeds the UI, so it runs **3 processes / ~255 MiB** instead of the
+dev install's 7 / ~550 MiB (npm + Vite + Node are gone). Note that the two
+builds use different localStorage origins (`tauri://localhost` vs
+`http://localhost:1420`), so settings, library folders and the timeline do not
+carry over between them — pick one and stay with it.
+
 ## Quickstart (dev, Linux)
 
 ```bash
