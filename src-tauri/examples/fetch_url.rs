@@ -14,6 +14,27 @@ fn main() {
     let dir = std::env::var("KAKIRI_TOOLS").unwrap_or_else(|_| "/tmp/kakiri-tools".into());
     download::set_tools_dir(PathBuf::from(dir));
 
+    // `fetch_url tool` only exercises the downloader check/update path.
+    if url == "tool" {
+        match download::ytdlp() {
+            Some((p, v)) => println!("current: {} ({v})", p.display()),
+            None => println!("current: none"),
+        }
+        let started = std::time::Instant::now();
+        match download::ensure_ytdlp("tool-job", &mut |pct, stage| {
+            if pct < 0.0 {
+                println!("  {stage}…");
+            }
+        }) {
+            Ok((v, updated)) => println!(
+                "result: {v}, downloaded={updated}, took {:.1}s",
+                started.elapsed().as_secs_f32()
+            ),
+            Err(e) => println!("error: {e}"),
+        }
+        return;
+    }
+
     match download::ytdlp() {
         Some((p, v)) => println!("downloader: {} ({v})", p.display()),
         None => println!("downloader: none found"),
@@ -27,7 +48,7 @@ fn main() {
                 println!("  tool {:.0}%", pct * 100.0);
             }
         }) {
-            Ok(v) => println!("installed {v}"),
+            Ok((v, updated)) => println!("{} {v}", if updated { "installed" } else { "already current" }),
             Err(e) => {
                 println!("FAILED: {e}");
                 return;

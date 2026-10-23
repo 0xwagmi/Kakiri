@@ -140,22 +140,108 @@ fn pump<R: std::io::Read + Send + 'static>(r: R, tx: std::sync::mpsc::Sender<Str
     });
 }
 
+/// Errors carry the action the UI should offer, so a restricted video can never
+/// be mistaken for a stale downloader.
+pub const NEEDS_UPDATE: &str = "@update@";
+pub const NEEDS_COOKIES: &str = "@cookies@";
+
 fn friendly_ytdlp_error(raw: &str) -> String {
     let msg = raw.trim();
     let low = msg.to_ascii_lowercase();
-    if low.contains("unsupported url") {
-        return "The downloader doesn't recognise that site.".into();
+    let tagged = |tag: &str, text: &str| format!("{tag}{text}");
+
+    // --- needs a signed-in session -----------------------------------------
+    if low.contains("confirm your age")
+        || low.contains("age-restricted")
+        || low.contains("age restricted")
+    {
+        return tagged(
+            NEEDS_COOKIES,
+            "This video is age-restricted, so the site wants a signed-in session.",
+        );
     }
-    if low.contains("not available on this app") || low.contains("sign in to confirm") {
-        return "The site refused the download — the downloader is out of date.".into();
+    if low.contains("confirm you") && low.contains("not a bot")
+        || low.contains("sign in to confirm")
+        || low.contains("please sign in")
+    {
+        return tagged(
+            NEEDS_COOKIES,
+            "The site wants to confirm you are a real person before downloading.",
+        );
+    }
+
+    // --- the downloader itself is behind -----------------------------------
+    if low.contains("not available on this app")
+        || low.contains("unable to extract")
+        || low.contains("failed to extract")
+        || low.contains("nsig")
+        || low.contains("player response")
+    {
+        return tagged(
+            NEEDS_UPDATE,
+            "The site refused the download — the downloader is out of date.",
+        );
+    }
+
+    // --- content that simply isn't available --------------------------------
+    if low.contains("private video") {
+        return "That video is private.".into();
+    }
+    if low.contains("removed by the uploader") || low.contains("video unavailable") {
+        return "That video is no longer available.".into();
+    }
+    if low.contains("not available in your country") || low.contains("blocked it in your country") {
+        return "That video is region-locked.".into();
     }
     if low.contains("requested format is not available") {
         return "That video has no audio-only stream the downloader can fetch.".into();
     }
-    if low.contains("private") || low.contains("removed") || low.contains("404") {
-        return "That video is private, removed or region-locked.".into();
+    if low.contains("http error 403") {
+        return "The site blocked the request (403). Try again in a moment.".into();
     }
-    format!("Downloader said: {msg}")
+    if low.contains("http error 429") || low.contains("too many requests") {
+        return "The site is rate-limiting downloads (429). Wait a minute and retry.".into();
+    }
+    if low.contains("unsupported url") {
+        return "The downloader doesn't recognise that site.".into();
+    }
+
+    // Anything else: quote the first useful line so it can be reported.
+    let first = msg.lines().find(|l| !l.trim().is_empty()).unwrap_or(msg).trim();
+    format!("Downloader said: {first}")
+}
+
+/// Split an error back into (action, message).
+pub fn split_error(err: &str) -> (&str, &str) {
+    for tag in [NEEDS_UPDATE, NEEDS_COOKIES] {
+        if let Some(rest) = err.strip_prefix(tag) {
+            return (tag, rest);
+        }
+    }
+    ("", err)
+}
+
+/// The latest published version, from GitHub's release feed.
+pub fn latest_release() -> Result<String, String> {
+    let resp = reqwest::blocking::Client::builder()
+        .user_agent(concat!("Kakiri/", env!("CARGO_PKG_VERSION")))
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?
+        .get("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest")
+        .send()
+        .map_err(|e| format!("cannot reach GitHub: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("GitHub answered {}", resp.status().as_u16()));
+    }
+    // no "json" feature: read the body and parse it ourselves
+    let body = resp.text().map_err(|e| format!("unreadable answer: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("unreadable answer: {e}"))?;
+    json.get("tag_name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "GitHub did not say which version is latest".to_string())
 }
 
 /// Extensions we will keep as-is when the URL advertises one.
@@ -179,10 +265,17 @@ fn video_ext(path: &str) -> Option<&'static str> {
 
 fn stem_from_url(url: &str) -> String {
     let no_query = url.split(['?', '#']).next().unwrap_or(url);
-    let last = no_query.trim_end_matches('/').rsplit('/').next().unwrap_or("");
+    // Drop the scheme and host: a URL like "https://x.test" has no file name at
+    // all, and naming the sound after the domain helps nobody.
+    let path = no_query.splitn(2, "://").nth(1).unwrap_or(no_query);
+    let path = match path.find('/') {
+        Some(i) => &path[i + 1..],
+        None => "",
+    };
+    let last = path.trim_end_matches('/').rsplit('/').next().unwrap_or("");
     let stem = last.rsplit_once('.').map(|(s, _)| s).unwrap_or(last);
     let decoded = percent_decode(stem);
-    import::sanitize_stem(if decoded.is_empty() { "download" } else { &decoded })
+    import::sanitize_stem(if decoded.trim().is_empty() { "download" } else { &decoded })
 }
 
 /// Just enough percent-decoding for file names (no external dependency).
@@ -238,6 +331,10 @@ pub fn fetch(
     on_progress: &mut dyn FnMut(f32, &str),
 ) -> Result<Imported, String> {
     let trimmed = url.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err("Paste a link that starts with http:// or https://".into());
+    }
     // A URL that ends in a media extension is a file; download it directly.
     let obvious_media = audio_ext(trimmed).is_some() || video_ext(trimmed).is_some();
     // Otherwise ask the server what it would send. Download endpoints often have
@@ -669,9 +766,21 @@ pub fn tools() -> Tools {
 }
 
 /// Fetch the downloader itself into `<app data>/tools` (17–39 MB, once).
-pub fn ensure_ytdlp(job: &str, on_progress: &mut dyn FnMut(f32, &str)) -> Result<String, String> {
+pub fn ensure_ytdlp(
+    job: &str,
+    on_progress: &mut dyn FnMut(f32, &str),
+) -> Result<(String, bool), String> {
     // No child process here, so cancellation is a flag the copy loop checks.
     clear_cancel(job);
+
+    // Ask GitHub first: "update" must never mean re-downloading the same bytes.
+    on_progress(-1.0, "checking for updates");
+    if let (Ok(latest), Some((_, current))) = (latest_release(), ytdlp()) {
+        if latest == current {
+            on_progress(1.0, "up to date");
+            return Ok((current, false));
+        }
+    }
     let dir = TOOLS_DIR
         .get()
         .cloned()
@@ -739,7 +848,7 @@ pub fn ensure_ytdlp(job: &str, on_progress: &mut dyn FnMut(f32, &str)) -> Result
         "The downloaded file does not run (wrong platform?).".to_string()
     })?;
     on_progress(1.0, "done");
-    Ok(version)
+    Ok((version, true))
 }
 
 /// Where URL downloads are allowed to land: an existing directory that the user
@@ -758,6 +867,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn age_restricted_is_a_cookie_problem_not_a_stale_downloader() {
+        // the exact line that made the UI offer a pointless 40 MB update
+        let raw = "ERROR: [youtube] ukznXQ3MgN0: Sign in to confirm your age. This video may be \
+inappropriate for some users. Use --cookies-from-browser";
+        let full = friendly_ytdlp_error(raw);
+        let (kind, msg) = split_error(&full);
+        assert_eq!(kind, NEEDS_COOKIES, "{msg}");
+        assert!(msg.contains("age-restricted"), "{msg}");
+    }
+
+    #[test]
+    fn bot_checks_are_cookie_problems_too() {
+        let raw = "ERROR: [youtube] x: Sign in to confirm you're not a bot. Use --cookies-from-browser";
+        assert_eq!(split_error(&friendly_ytdlp_error(raw)).0, NEEDS_COOKIES);
+    }
+
+    #[test]
+    fn broken_extraction_is_the_only_update_case() {
+        for raw in [
+            "ERROR: [youtube] x: Unable to extract player response",
+            "ERROR: [youtube] x: nsig extraction failed",
+            "ERROR: [youtube] x: The following content is not available on this app",
+        ] {
+            assert_eq!(split_error(&friendly_ytdlp_error(raw)).0, NEEDS_UPDATE, "{raw}");
+        }
+    }
+
+    #[test]
+    fn unavailable_content_offers_no_action() {
+        for raw in [
+            "ERROR: [youtube] x: Private video. Sign in if you have been granted access",
+            "ERROR: [youtube] x: Video unavailable",
+            "ERROR: Requested format is not available",
+        ] {
+            let full = friendly_ytdlp_error(raw);
+            let (kind, msg) = split_error(&full);
+            assert_eq!(kind, "", "{raw} -> {msg}");
+        }
+    }
+
+    #[test]
     fn audio_extensions_win_over_query_strings() {
         assert_eq!(audio_ext("https://x.test/a/Song.mp3?token=1"), Some("mp3"));
         assert_eq!(audio_ext("https://x.test/a.Song.M4A"), Some("m4a"));
@@ -768,7 +918,8 @@ mod tests {
     fn stems_come_from_the_last_path_segment() {
         assert_eq!(stem_from_url("https://x.test/a/My%20Song.mp3?t=2"), "My Song");
         assert_eq!(stem_from_url("https://x.test/a/"), "a");
-        assert_eq!(stem_from_url("https://x.test"), "x.test");
+        assert_eq!(stem_from_url("https://x.test"), "download");
+        assert_eq!(stem_from_url("https://x.test/audio/track.m4a"), "track");
     }
 
     #[test]
@@ -788,7 +939,8 @@ mod tests {
 
     #[test]
     fn non_http_links_are_rejected_before_any_io() {
-        let err = fetch("file:///etc/passwd", Path::new("/tmp"), &mut |_, _| {}).unwrap_err();
+        let err =
+            fetch("t", "file:///etc/passwd", Path::new("/tmp"), None, &mut |_, _| {}).unwrap_err();
         assert!(err.contains("http"), "{err}");
     }
 }

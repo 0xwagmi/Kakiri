@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-dialog";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import {
     X,
     Upload,
@@ -33,6 +34,9 @@
     stage: string;
     state: "running" | "done" | "error";
     error?: string;
+    /** "" | "update" | "cookies" — what the UI should offer. */
+    kind?: string;
+    link?: string;
   };
 
   let tab: "file" | "link" = "file";
@@ -69,6 +73,13 @@
     return job;
   }
 
+  /** Backend tags errors with the action they need: @update@ / @cookies@. */
+  function readError(e: unknown): { kind: string; msg: string } {
+    const raw = String(e);
+    const m = /^@(update|cookies)@([\s\S]*)$/.exec(raw);
+    return m ? { kind: m[1], msg: m[2] } : { kind: "", msg: raw };
+  }
+
   function settle(id: string, patch: Partial<Job>) {
     jobs = jobs.map((j) => (j.id === id ? { ...j, ...patch } : j));
   }
@@ -102,6 +113,7 @@
         ? `${probe?.title ?? link} (${fmtClock(from!)}–${fmtClock(to!)})`.slice(0, 48)
         : (probe?.title ?? link.replace(/^https?:\/\//, "")).slice(0, 48),
     );
+    job.link = link;
     url = "";
     probe = null;
     try {
@@ -115,7 +127,8 @@
       settle(job.id, { state: "done", pct: 1, stage: "done" });
       onDone(got);
     } catch (e) {
-      settle(job.id, { state: "error", stage: "", error: String(e) });
+      const { kind, msg } = readError(e);
+      settle(job.id, { state: "error", stage: "", error: msg, kind });
     }
   }
 
@@ -150,7 +163,8 @@
       clipOn = info.duration_secs > 30;
       if (info.duration_secs > 0) clipTo = fmtClock(Math.min(15, info.duration_secs));
     } catch (e) {
-      probeError = String(e);
+      const { msg } = readError(e);
+      probeError = msg;
     } finally {
       probing = false;
     }
@@ -159,15 +173,22 @@
   async function setupDownloader() {
     probeError = "";
     updating = true;
-    const job = addJob(ytdlp ? `Downloader update (was ${ytdlp})` : "Downloader (yt-dlp)");
+    const job = addJob(ytdlp ? `Downloader check (has ${ytdlp})` : "Downloader (yt-dlp)");
     try {
-      const version = await invoke<string>("import_ensure_ytdlp", { job: job.id });
-      ytdlp = version;
+      const got = await invoke<{ version: string; updated: boolean }>("import_ensure_ytdlp", {
+        job: job.id,
+      });
+      ytdlp = got.version;
       ytdlpStale = false;
       settle(job.id, { state: "done", pct: 1, stage: "done" });
-      flashLink(`Downloader ${version} ready — paste the link again.`);
+      flashLink(
+        got.updated
+          ? `Downloader ${got.version} installed — paste the link again.`
+          : `Downloader ${got.version} is already the latest.`,
+      );
     } catch (e) {
-      settle(job.id, { state: "error", stage: "", error: String(e) });
+      const { msg } = readError(e);
+      settle(job.id, { state: "error", stage: "", error: msg });
     } finally {
       updating = false;
     }
@@ -409,10 +430,15 @@
             {/if}
             {#if j.error}
               <p class="jerr">{j.error}</p>
-              {#if /out of date|refused the download/i.test(j.error) && ytdlp}
+              {#if j.kind === "update"}
                 <button class="primary small fix" onclick={setupDownloader} disabled={updating}>
-                  Update downloader
+                  Check for update
                 </button>
+              {:else if j.kind === "cookies"}
+                <button
+                  class="primary small fix"
+                  onclick={() => j.link && openUrl(j.link).catch(() => {})}>Open the page</button
+                >
               {/if}
             {/if}
           </li>

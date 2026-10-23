@@ -608,14 +608,28 @@ async fn import_probe(url: String) -> Result<download::PageInfo, String> {
 }
 
 /// Install (or refresh) the downloader used for page links.
+///
+/// Checks GitHub first, so asking for an update when we are already current
+/// reports that instead of moving 40 MB again.
+#[derive(serde::Serialize)]
+struct ToolUpdate {
+    version: String,
+    /// False when nothing was downloaded because we were already current.
+    updated: bool,
+}
+
 #[tauri::command]
-async fn import_ensure_ytdlp(app: tauri::AppHandle, job: String) -> Result<String, String> {
+async fn import_ensure_ytdlp(
+    app: tauri::AppHandle,
+    job: String,
+) -> Result<ToolUpdate, String> {
     let app2 = app.clone();
     let job2 = job.clone();
     tauri::async_runtime::spawn_blocking(move || {
         download::ensure_ytdlp(&job2, &mut |pct, stage| {
             emit_progress(&app2, &job2, pct, stage);
         })
+        .map(|(version, updated)| ToolUpdate { version, updated })
     })
     .await
     .map_err(|e| e.to_string())?
