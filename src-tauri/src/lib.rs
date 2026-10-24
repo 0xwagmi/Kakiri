@@ -675,9 +675,50 @@ fn set_hotkeys(app: tauri::AppHandle, accelerators: Vec<String>) -> Vec<String> 
         .collect()
 }
 
+/// Send panics to the log as well, not just to a stderr nobody reads.
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("panic: {info}");
+        previous(info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_panic_hook();
     tauri::Builder::default()
+        // First plugin, as the single-instance plugin requires: a second launch
+        // must not create a second engine writing to the same virtual sink.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        // Everything audio-core logs (device errors, timeline failures) plus
+        // panics lands in <app data>/logs, so a user can send one file.
+        .plugin(
+            // This file is for Kakiri's own diagnostics, not the decoder's
+            // internals: symphonia emits a warning per file it probes, which
+            // buried everything else. Third-party crates log errors only.
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Error)
+                .level_for("audio_core", log::LevelFilter::Info)
+                .level_for("soundboard_lib", log::LevelFilter::Info)
+                // the builder already has default targets; replace them so each
+                // record is written once instead of twice
+                .clear_targets()
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::LogDir { file_name: None },
+                ))
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Stdout,
+                ))
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -701,6 +742,26 @@ pub fn run() {
             // never block startup waiting for it.
             virtualmic::autostart();
             let target = virtualmic::status().map(|m| m.sink).unwrap_or_default();
+            // A log that only ever contains errors is useless in a bug report:
+            // record what the app started with.
+            let backend = if cfg!(target_os = "linux") { "pipewire" } else { "cpal" };
+            log::info!(
+                "Kakiri {} starting ({backend} backend, bus {} Hz / {} ch)",
+                env!("CARGO_PKG_VERSION"),
+                fmt.rate,
+                fmt.channels
+            );
+            match virtualmic::status() {
+                Ok(mic) => log::info!(
+                    "virtual mic present={} persistent={} sink={} source={}",
+                    mic.present,
+                    mic.persistent,
+                    mic.sink,
+                    mic.source
+                ),
+                Err(e) => log::warn!("virtual mic status unavailable: {e}"),
+            }
+            log::info!("output target: {}", if target.is_empty() { "default" } else { &target });
             let engine = Engine::new(fmt, make_output(target, fmt));
             app.manage(AppState {
                 engine,

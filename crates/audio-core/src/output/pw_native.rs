@@ -76,7 +76,7 @@ impl AudioOutput for PipeWireOutput {
                     channels: channels as usize,
                 };
                 if let Err(e) = run_output(target, rate, channels, data, rx, &ready_tx) {
-                    eprintln!("[pw-out] {e}");
+                    log::error!("[pw-out] {e}");
                     let _ = ready_tx.send(Err(e.to_string()));
                 }
             })?;

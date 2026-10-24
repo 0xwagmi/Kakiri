@@ -67,7 +67,7 @@ fn build_stream(
                 let _ = producer.push(s);
             }
         },
-        |e| eprintln!("[cpal-in] {e}"),
+        |e| log::error!("[cpal-in] {e}"),
         None,
     )?;
     stream.play()?;

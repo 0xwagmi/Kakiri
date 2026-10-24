@@ -404,11 +404,11 @@ fn spawn_clip(
             }
             match eng.play_stream_from(key, label, path, gain, false, route, skip) {
                 Ok(id) => ids.lock().unwrap().push((clip_id, id)),
-                Err(e) => eprintln!("[timeline] {e}"),
+                Err(e) => log::error!("[timeline] {e}"),
             }
         });
     if spawned.is_err() {
-        eprintln!("[timeline] could not spawn clip thread");
+        log::error!("[timeline] could not spawn clip thread");
     }
 }
 

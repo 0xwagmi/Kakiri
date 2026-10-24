@@ -18,7 +18,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
     }
   },
   "bundle": {
@@ -30,6 +30,29 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "publisher": "0xwagmi",
+    "homepage": "https://github.com/0xwagmi/Kakiri",
+    "category": "Music",
+    "shortDescription": "Play sounds through a virtual microphone in Discord",
+    "longDescription": "Kakiri mixes sound effects and music into a virtual microphone so Discord hears them as your voice, while your real microphone is mixed in so you can keep talking. Library, hotkey pads, a timeline arranger and file/video/link import.",
+    "linux": {
+      "deb": {
+        "depends": [
+          "pipewire"
+        ],
+        "files": {
+          "usr/share/metainfo/com.kakiri.soundboard.metainfo.xml": "metainfo/com.kakiri.soundboard.metainfo.xml"
+        }
+      },
+      "rpm": {
+        "depends": [
+          "pipewire"
+        ],
+        "files": {
+          "usr/share/metainfo/com.kakiri.soundboard.metainfo.xml": "metainfo/com.kakiri.soundboard.metainfo.xml"
+        }
+      }
+    }
   }
 }

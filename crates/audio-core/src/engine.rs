@@ -89,7 +89,7 @@ pub struct Engine {
 impl Engine {
     pub fn new(format: BusFormat, mut mic: Box<dyn AudioOutput>) -> Arc<Self> {
         if let Err(e) = mic.start() {
-            eprintln!("[engine] mic output start failed: {e}");
+            log::error!("[engine] mic output start failed: {e}");
         }
         let (outputs_tx, outputs_rx) = std::sync::mpsc::channel();
         let engine = Arc::new(Self {
@@ -190,7 +190,7 @@ impl Engine {
                             Some(inp) => match inp.read(&mut buf) {
                                 Ok(n) => n,
                                 Err(e) => {
-                                    eprintln!("[engine] input ended: {e}");
+                                    log::error!("[engine] input ended: {e}");
                                     slot.input = None; // stop trying; avoids a spin
                                     0
                                 }

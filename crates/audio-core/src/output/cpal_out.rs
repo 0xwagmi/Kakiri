@@ -73,7 +73,7 @@ fn build_stream(
                 *s = consumer.pop().unwrap_or(0.0);
             }
         },
-        |e| eprintln!("[cpal-out] {e}"),
+        |e| log::error!("[cpal-out] {e}"),
         None,
     )?;
     stream.play()?;

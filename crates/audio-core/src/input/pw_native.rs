@@ -68,7 +68,7 @@ impl AudioInput for PipeWireInput {
             .spawn(move || {
                 let data = InData { producer };
                 if let Err(e) = run_input(target, rate, channels, data, rx, &ready_tx) {
-                    eprintln!("[pw-in] {e}");
+                    log::error!("[pw-in] {e}");
                     let _ = ready_tx.send(Err(e.to_string()));
                 }
             })?;

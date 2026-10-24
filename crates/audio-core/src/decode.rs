@@ -222,7 +222,7 @@ pub fn decode_file(path: &Path, target: BusFormat) -> Result<Decoded> {
             Ok(None) => break,
             Err(SymphoniaError::ResetRequired) => break,
             Err(e) => {
-                eprintln!("[decode] {e}");
+                log::warn!("[decode] {e}");
                 break;
             }
         };

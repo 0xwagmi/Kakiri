@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.kakiri.soundboard</id>
+  <name>Kakiri</name>
+  <summary>Play sounds through a virtual microphone in Discord</summary>
+
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+
+  <description>
+    <p>
+      Kakiri is a soundboard that mixes sound effects and music into a virtual
+      microphone, so Discord (or any other voice app) hears them as your voice.
+      Your real microphone is mixed in as well, so you can keep talking.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Library of folders with search, tags and cover art</li>
+      <li>Hotkey pads for firing sounds mid-call</li>
+      <li>Timeline arranger that layers clips on six tracks, editable while it plays</li>
+      <li>Import by dropping a file, pasting a direct link, or downloading a video's audio</li>
+      <li>Windows-neutral design: soundboard goes to the virtual mic, preview stays on your headphones</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">Kakiri.desktop</launchable>
+  <url type="homepage">https://github.com/0xwagmi/Kakiri</url>
+  <url type="bugtracker">https://github.com/0xwagmi/Kakiri/issues</url>
+
+  <provides>
+    <binary>soundboard</binary>
+  </provides>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Mixer</category>
+  </categories>
+
+  <keywords>
+    <keyword>soundboard</keyword>
+    <keyword>discord</keyword>
+    <keyword>microphone</keyword>
+    <keyword>voice</keyword>
+    <keyword>meme</keyword>
+  </keywords>
+
+  <releases>
+    <release version="0.1.0" date="2026-10-24">
+      <description>
+        <p>First public build: library, hotkey pads, timeline arranger, importing
+        files/videos/links, and a persistent virtual microphone on PipeWire.</p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1"/>
+</component>
