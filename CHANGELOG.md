@@ -4,6 +4,43 @@ All notable changes to Kakiri are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — desktop polish (Linux alpha)
+
+Everything a reviewer would poke at in a first release. No audio-path changes.
+
+### Added
+
+- **Single-instance guard**: launching Kakiri while it is already running raises
+  the existing window instead of starting a second engine. Two engines used to
+  write the same virtual sink and the same settings file.
+- **File logging** to `~/.local/share/com.kakiri.soundboard/logs/Kakiri.log` with
+  a panic hook, so a bug report comes with context: version, backend, bus
+  format, virtual-mic status and output target are logged at startup.
+  Third-party crates log errors only (symphonia logs a warning per probed file).
+- **AppStream metadata** (`/usr/share/metainfo`), so software centres can show
+  Kakiri with a description and category.
+- `pipewire` added to the package dependencies.
+
+### Changed
+
+- **Content Security Policy** instead of `null`: no inline script, `data:` only
+  for images/media, `connect-src` limited to the app and its IPC origins.
+- The desktop entry is now `Name=Kakiri` with
+  `Categories=AudioVideo;Audio;Mixer;` (it was "Kakiri Soundboard" and an empty
+  category, which filed it under "Other" in some launchers).
+- Release assets are named `Kakiri_<version>_amd64.deb` rather than
+  `Kakiri Soundboard_…`, and `SHA256SUMS` lists plain file names so
+  `sha256sum -c SHA256SUMS` works for files downloaded side by side.
+- The release workflow builds on **Ubuntu 24.04**: `libspa-sys` needs PipeWire 1.0
+  headers, so a 22.04 build was never runnable anyway. Release notes now state
+  the real requirement.
+- `scripts/run.sh` and the `app`/`serve` npm scripts are gone. Development is
+  `npm run tauri dev`; installing is `./scripts/install.sh`.
+
+### Fixed
+
+- Package `Depends` duplicated webkit/gtk, and the deb `Description` was empty.
+
 ## [0.1.0] — first public build (Linux alpha)
 
 First release. Kakiri plays sounds through a virtual microphone so Discord (or
@@ -72,4 +109,5 @@ you can still talk.
 - `ffmpeg` and `yt-dlp` are optional, detected on `PATH`; the app offers to fetch
   yt-dlp itself.
 
+[0.1.1]: https://github.com/0xwagmi/Kakiri/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/0xwagmi/Kakiri/releases/tag/v0.1.0
