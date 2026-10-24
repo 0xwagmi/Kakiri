@@ -122,6 +122,28 @@ builds use different localStorage origins (`tauri://localhost` vs
 `http://localhost:1420`), so settings, library folders and the timeline do not
 carry over between them — pick one and stay with it.
 
+## Releasing
+
+Releases are built by CI, not by hand, and only for a version tag (pushing to
+`dev`/`main` never starts a build):
+
+```bash
+# 1. bump the version in src-tauri/tauri.conf.json, package.json and Cargo.toml
+# 2. add the release to CHANGELOG.md
+git commit -am "Release v0.1.0"
+git tag -a v0.1.0 -m "Kakiri v0.1.0"
+git push origin dev --follow-tags        # CI builds and publishes
+```
+
+`.github/workflows/release.yml` checks that the tag matches the app version,
+runs the test suite, builds on `ubuntu-22.04` (so binaries work on glibc 2.35+),
+attaches `.deb` / `.rpm` / `.AppImage` plus `SHA256SUMS` to the release, and
+marks `v0.x` tags as pre-releases. Windows and macOS jobs are written but
+commented out until their audio path has been tested on real hardware.
+
+It can also be run by hand from the Actions tab (`workflow_dispatch`), which
+builds a draft release for an existing tag.
+
 ## Quickstart (dev, Linux)
 
 ```bash
