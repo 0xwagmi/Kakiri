@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Kakiri Soundboard",
+  "productName": "Kakiri",
   "version": "0.1.0",
   "identifier": "com.kakiri.soundboard",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Kakiri Soundboard",
+        "title": "Kakiri",
         "width": 900,
         "height": 700
       }

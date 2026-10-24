@@ -101,16 +101,24 @@ jobs:
 
             Verify downloads with `sha256sum -c SHA256SUMS`.
 
-            **Notes** — Linux only for now (the Windows/macOS audio path is not
-            tested yet). Needs **PipeWire 1.0+**, i.e. Ubuntu 24.04 / Fedora 39 /
-            Arch or newer (the build links glibc 2.39). `ffmpeg` and `yt-dlp` are
-            optional, for video import and page links.
+            **Requirements** — Linux, **PipeWire 1.0+** (Ubuntu 24.04 / Fedora 39 /
+            Arch or newer; the build links glibc 2.39). The `.deb` only pulls in
+            webkit/gtk automatically, so install PipeWire yourself if it is not
+            already running: `sudo apt install pipewire`. `ffmpeg` and `yt-dlp`
+            are optional, for video import and page links.
+
+            **Platforms** — Linux only for now: the Windows/macOS audio path is
+            implemented but has not run on real hardware yet.
 
       - name: Checksums
         run: |
+          # Plain file names only: the bundle keeps artifacts in deb/, rpm/ and
+          # appimage/, but a user who downloaded the files has them side by side,
+          # so a path like "deb/..." makes `sha256sum -c` fail.
           cd target/release/bundle
           find . -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) \
-            -exec sha256sum {} + | sed 's| \./| |' > SHA256SUMS
+            | sort | while read -r f; do sha256sum "$f" | sed "s|  \./|  |"; done > /tmp/SUMS
+          awk '{ n=$2; sub(/^.*\//, "", n); print $1"  "n }' /tmp/SUMS > SHA256SUMS
           cat SHA256SUMS
 
       - name: Attach checksums to the release
