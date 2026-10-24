@@ -90,7 +90,20 @@ docs/
   UI.md                wireframes / screen inventory
 ```
 
-## Install (Linux, no sudo)
+## Install from a release (Linux, no sudo)
+
+If you just want the app, without a Rust/Node toolchain:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/0xwagmi/Kakiri/main/scripts/install-release.sh | bash
+```
+
+It downloads the ~7 MB `.deb` from the latest release, verifies it against the
+release's `SHA256SUMS`, and installs the binary, icons and menu entry into
+`~/.local` — nothing system-wide, no root. `--version v0.1.1` pins a release,
+`--appimage` uses the AppImage instead (needed on non-Debian systems, ~82 MB).
+
+## Install from source (Linux, no sudo)
 
 ```bash
 npm install
