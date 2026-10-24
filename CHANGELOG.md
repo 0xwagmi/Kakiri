@@ -65,8 +65,9 @@ you can still talk.
 - **Linux only.** The Windows/macOS audio path (`cpal` + VB-CABLE/BlackHole) is
   implemented but has not been run on real hardware yet.
 - Global hotkeys are best-effort on Wayland; in-app shortcuts always work.
-- Requires PipeWire (tested on Ubuntu 24.04 with PipeWire 1.0.5). The release
-  build targets glibc 2.35+ (Ubuntu 22.04 and newer).
+- Requires **PipeWire 1.0+** (Ubuntu 24.04+ / Fedora 39+ / Arch; tested on Ubuntu
+  24.04 with PipeWire 1.0.5). Ubuntu 22.04 ships PipeWire 0.3.48 and cannot run
+  it; the build links glibc 2.39.
 - No tray menu or single-instance guard yet.
 - `ffmpeg` and `yt-dlp` are optional, detected on `PATH`; the app offers to fetch
   yt-dlp itself.

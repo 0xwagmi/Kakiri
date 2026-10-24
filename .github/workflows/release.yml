@@ -26,9 +26,11 @@ permissions:
 jobs:
   linux:
     name: Linux (x86_64)
-    # Pinned to 22.04 on purpose: the .deb/AppImage then link glibc 2.35 and run
-    # on 22.04 and newer. Building on 24.04 would silently exclude those users.
-    runs-on: ubuntu-22.04
+    # 24.04, not the oldest Ubuntu: audio-core links pipewire-rs with the v1_0_0
+    # feature, and libspa-sys needs headers only PipeWire 1.0 provides
+    # (spa_type_video_flags). Ubuntu 22.04 has 0.3.48, so the app cannot run
+    # there anyway — building on 24.04 matches reality instead of pretending.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -100,8 +102,8 @@ jobs:
             Verify downloads with `sha256sum -c SHA256SUMS`.
 
             **Notes** — Linux only for now (the Windows/macOS audio path is not
-            tested yet). Requires PipeWire (tested on Ubuntu 24.04); the build
-            targets glibc 2.35+ (Ubuntu 22.04+). `ffmpeg` and `yt-dlp` are
+            tested yet). Needs **PipeWire 1.0+**, i.e. Ubuntu 24.04 / Fedora 39 /
+            Arch or newer (the build links glibc 2.39). `ffmpeg` and `yt-dlp` are
             optional, for video import and page links.
 
       - name: Checksums

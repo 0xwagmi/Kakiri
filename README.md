@@ -136,7 +136,7 @@ git push origin dev --follow-tags        # CI builds and publishes
 ```
 
 `.github/workflows/release.yml` checks that the tag matches the app version,
-runs the test suite, builds on `ubuntu-22.04` (so binaries work on glibc 2.35+),
+runs the test suite, builds on `ubuntu-24.04` (PipeWire 1.0 headers are required),
 attaches `.deb` / `.rpm` / `.AppImage` plus `SHA256SUMS` to the release, and
 marks `v0.x` tags as pre-releases. Windows and macOS jobs are written but
 commented out until their audio path has been tested on real hardware.
