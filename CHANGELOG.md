@@ -39,8 +39,8 @@ you can still talk.
   (`--download-sections`) so a 3-minute video becomes a 6-second sound. The
   downloader can be installed/updated from the panel.
 - **Install tooling**: `scripts/install.sh` (standalone or `--dev`),
-  `scripts/uninstall.sh` (with `--purge`), `scripts/run.sh` and a `kakiri`
-  command with desktop entry and icons.
+  `scripts/uninstall.sh` (with `--purge`) and a `kakiri` command with desktop
+  entry and icons.
 - **Release automation**: tag-driven GitHub Actions workflow publishing
   `.deb` / `.rpm` / `.AppImage` with checksums.
 

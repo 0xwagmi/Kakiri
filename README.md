@@ -94,7 +94,7 @@ docs/
 
 ```bash
 npm install
-./scripts/install.sh --dev     # use the release build already in target/release
+./scripts/install.sh           # builds the app and installs it (no sudo)
 ```
 
 That puts a `kakiri` command in `~/.local/bin`, installs the icon in every size
@@ -107,14 +107,8 @@ kakiri                 # launches the app
 ./scripts/uninstall.sh --purge    # ...and its settings + downloaded tools
 ```
 
-`--dev` avoids a rebuild: the app runs the optimised engine from
-`target/release` while a Vite dev server serves the UI, so interface edits
-reload instantly. For a fully standalone install (frontend embedded, nothing but
-the binary — no dev server), drop the flag:
-
-```bash
-./scripts/install.sh           # builds with `tauri build --no-bundle` first
-```
+The build embeds the UI, so the installed app needs nothing else running — it is
+**3 processes / ~255 MiB** instead of a dev server's 7 / ~550 MiB.
 
 That build embeds the UI, so it runs **3 processes / ~255 MiB** instead of the
 dev install's 7 / ~550 MiB (npm + Vite + Node are gone). Note that the two
@@ -148,10 +142,8 @@ builds a draft release for an existing tag.
 
 ```bash
 npm install
-npm run app                # release engine + hot-reloading UI (scripts/run.sh)
-npm run app:rebuild        # same, after changing Rust code
-npm run serve              # only the Vite server
-npm run tauri dev          # classic debug build, rebuilds on save
+npm run tauri dev          # debug build + Vite + hot reload, rebuilds on save
+./scripts/install.sh       # packaged build into ~/.local (kakiri, icon, menu entry)
 ```
 
 The backend can also be exercised headlessly with the spike CLI:

@@ -2,9 +2,8 @@
 #
 # Install Kakiri into your user account (no sudo, no root files touched).
 #
-#   ./scripts/install.sh              # build a standalone app and install it
+#   ./scripts/install.sh              # build the app and install it
 #   ./scripts/install.sh --prefix DIR # install somewhere else (default ~/.local)
-#   ./scripts/install.sh --dev        # install the dev runner instead (Vite + release)
 #   ./scripts/install.sh --uninstall  # remove it again
 #
 # Installs: $PREFIX/bin/kakiri, $PREFIX/share/applications/kakiri.desktop and the
@@ -19,7 +18,6 @@ cd "$ROOT"
 
 PREFIX="${XDG_DATA_HOME:+$(dirname "$XDG_DATA_HOME")}"
 PREFIX="${PREFIX:-$HOME/.local}"
-MODE="release"
 ASSUME_YES=0
 
 die() { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
@@ -29,7 +27,6 @@ ok() { printf '\033[32m✓\033[0m %s\n' "$*"; }
 while [ $# -gt 0 ]; do
   case "$1" in
     --prefix) shift; PREFIX="${1:?--prefix needs a directory}" ;;
-    --dev) MODE="dev" ;;
     --uninstall) exec "$ROOT/scripts/uninstall.sh" ${PREFIX:+--prefix "$PREFIX"} ;;
     -y|--yes) ASSUME_YES=1 ;;
     -h|--help) sed -n '2,/^set -euo/p' "$SELF" | sed 's/^# \{0,1\}//' | sed '$d'; exit 0 ;;
@@ -88,25 +85,11 @@ refresh_caches() {
     gtk-update-icon-cache -q -t -f "$ICON_ROOT" >/dev/null 2>&1 || true
 }
 
-if [ "$MODE" = "dev" ]; then
-  # A link to the dev runner: Vite serves the UI, the release engine plays audio.
-  command -v npm >/dev/null || die "npm is not installed"
-  mkdir -p "$BIN_DIR"
-  ln -sfn "$ROOT/scripts/run.sh" "$BIN"
-  install_icons
-  install_desktop_entry "$BIN"
-  refresh_caches
-  ok "installed (dev mode): $BIN -> $ROOT/scripts/run.sh"
-  echo "  start it with: kakiri            # or from the application menu"
-  echo "  uninstall with: ./scripts/install.sh --uninstall"
-  exit 0
-fi
-
-# --- standalone build ---------------------------------------------------------
+# --- build + install ---------------------------------------------------------
 command -v npm >/dev/null || die "npm is not installed"
 command -v cargo >/dev/null || die "cargo is not installed"
 
-info "building the standalone app (this compiles the frontend and the release binary)"
+info "building the app (frontend + release binary)"
 # --no-bundle: we install the binary ourselves, so no .deb/AppImage is produced.
 npm run tauri build -- --no-bundle
 
