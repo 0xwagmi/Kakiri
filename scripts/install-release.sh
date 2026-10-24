@@ -33,10 +33,41 @@ VERSION=""
 FORCE_APPIMAGE=0
 API="https://api.github.com/repos/$REPO/releases"
 
-die() { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
-info() { printf '\033[36m▸\033[0m %s\n' "$*"; }
-ok() { printf '\033[32m✓\033[0m %s\n' "$*"; }
-warn() { printf '\033[33m!\033[0m %s\n' "$*"; }
+# Only when a human is watching: no colour in a pipe, no banner in CI logs.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_ART=$'\033[38;5;141m'; C_B=$'\033[1m'; C_DIM=$'\033[2m'; C_0=$'\033[0m'
+  C_INFO=$'\033[36m'; C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_ERR=$'\033[31m'
+else
+  C_ART=''; C_B=''; C_DIM=''; C_0=''
+  C_INFO=''; C_OK=''; C_WARN=''; C_ERR=''
+fi
+
+banner() {
+  # Purple cat + wordmark, dim facts underneath. Only the version and the prefix
+  # are dynamic; the artwork is pre-aligned so it cannot drift.
+  local art=(
+    "⠀⠀⠠⠤⠀⢀⣿⡀"
+    "⠀⠀⠐⠀⠐⠀⠀⢀⣾⣿⡇⠀⠀⠀⠀⠀⢀⣼⡇       ██╗  ██╗ █████╗ ██╗  ██╗██╗██████╗ ██╗"
+    "⠀⠀⠀⠀⠀⠀⠀⣸⣿⣿⣿⠀⠀⠀⠀⣴⣿⣿⠇       ██║ ██╔╝██╔══██╗██║ ██╔╝██║██╔══██╗██║"
+    "⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⣇⠀⠀⢀⣾⣿⣿⣿        █████╔╝ ███████║█████╔╝ ██║██████╔╝██║"
+    "⠀⠀⠀⠀⠀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⠀⠀⠐⠀⡀   ██╔═██╗ ██╔══██║██╔═██╗ ██║██╔══██╗██║"
+    "⠀⠀⠀⠀⢰⡿⠉⠀⡜⣿⣿⣿⡿⠿⢿⣿⣿⡃⠀⠀⠂⠄⠀   ██║  ██╗██║  ██║██║  ██╗██║██║  ██║██║"
+    "⠀⠀⠒⠒⠸⣿⣄⡘⣃⣿⣿⡟⢰⠃⠀⢹⣿⡇        ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝╚═╝"
+    "⠀⠀⠚⠉⠀⠊⠻⣿⣿⣿⣿⣿⣮⣤⣤⣿⡟⠁⠘⠠⠁"
+  )
+  local line
+  printf '\n'
+  for line in "${art[@]}"; do
+    printf '  %s%s%s\n' "$C_ART" "$line" "$C_0"
+  done
+  printf '                            %ssoundboard for Discord · %s%s\n' "$C_DIM" "${VERSION:-}" "$C_0"
+  printf '                            %sno root · installs into %s%s\n\n' "$C_DIM" "$PREFIX" "$C_0"
+}
+
+die() { printf '%s%s%s\n' "$C_ERR" "$*" "$C_0" >&2; exit 1; }
+info() { printf '%s▸%s %s\n' "$C_INFO" "$C_0" "$*"; }
+ok() { printf '%s✓%s %s\n' "$C_OK" "$C_0" "$*"; }
+warn() { printf '%s!%s %s\n' "$C_WARN" "$C_0" "$*"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -69,7 +100,6 @@ if [ -z "$VERSION" ]; then
     sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
   [ -n "$VERSION" ] || die "could not find a release of $REPO"
 fi
-ok "release: $VERSION"
 BASE="https://github.com/$REPO/releases/download/$VERSION"
 
 # --- choose the artifact ------------------------------------------------------
@@ -90,6 +120,8 @@ else
   artifact="Kakiri_${VERSION#v}_${suffix}.AppImage"
 fi
 
+# Keep logs and CI output plain: artwork only when a human is watching.
+if [ -t 1 ]; then banner; fi
 info "downloading $artifact"
 curl -fL --progress-bar "$BASE/$artifact" -o "$tmp/$artifact"
 curl -fsSL "$BASE/SHA256SUMS" -o "$tmp/SHA256SUMS"
