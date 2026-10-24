@@ -114,11 +114,13 @@ jobs:
         run: |
           # Plain file names only: the bundle keeps artifacts in deb/, rpm/ and
           # appimage/, but a user who downloaded the files has them side by side,
-          # so a path like "deb/..." makes `sha256sum -c` fail.
+          # so a path like "deb/..." (or a name with spaces, which trips up awk)
+          # makes `sha256sum -c` fail. basename as an argument handles both.
           cd target/release/bundle
-          find . -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) \
-            | sort | while read -r f; do sha256sum "$f" | sed "s|  \./|  |"; done > /tmp/SUMS
-          awk '{ n=$2; sub(/^.*\//, "", n); print $1"  "n }' /tmp/SUMS > SHA256SUMS
+          : > SHA256SUMS
+          while IFS= read -r f; do
+            printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$(basename "$f")" >> SHA256SUMS
+          done < <(find . -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) | sort)
           cat SHA256SUMS
 
       - name: Attach checksums to the release
