@@ -18,8 +18,14 @@
 #
 set -euo pipefail
 
-SELF="$(readlink -f "${BASH_SOURCE[0]}")"
-ROOT="$(cd "$(dirname "$SELF")/.." && pwd)" # only used for --help context
+# When this is piped (curl … | bash) there is no script file at all, so
+# BASH_SOURCE is unset — with `set -u` that would abort before doing anything.
+SELF="${BASH_SOURCE[0]:-}"
+ROOT=""
+if [ -n "$SELF" ]; then
+  SELF="$(readlink -f "$SELF")"
+  ROOT="$(cd "$(dirname "$SELF")/.." && pwd)" # only used to find icons
+fi
 REPO="${KAKIRI_REPO:-0xwagmi/Kakiri}"
 PREFIX="${XDG_DATA_HOME:+$(dirname "$XDG_DATA_HOME")}"
 PREFIX="${PREFIX:-$HOME/.local}"
@@ -37,7 +43,13 @@ while [ $# -gt 0 ]; do
     --version) shift; VERSION="${1:?--version needs a tag like v0.1.1}" ;;
     --prefix) shift; PREFIX="${1:?--prefix needs a directory}" ;;
     --appimage) FORCE_APPIMAGE=1 ;;
-    -h|--help) sed -n '2,/^set -euo/p' "$SELF" | sed 's/^# \{0,1\}//' | sed '$d'; exit 0 ;;
+    -h|--help)
+      if [ -n "$SELF" ] && [ -f "$SELF" ]; then
+        sed -n '2,/^set -euo/p' "$SELF" | sed 's/^# \{0,1\}//' | sed '$d'
+      else
+        echo "usage: curl -fsSL <url>/scripts/install-release.sh | bash -s -- [--version vX.Y.Z] [--prefix DIR] [--appimage]"
+      fi
+      exit 0 ;;
     *) die "unknown option: $1 (try --help)" ;;
   esac
   shift
@@ -109,7 +121,7 @@ if [ "$use_deb" = "1" ]; then
   done < <(find "$tmp/root" -path '*icons/hicolor/*/apps/*.png' 2>/dev/null)
 else
   install -m755 "$tmp/$artifact" "$BIN"
-  if [ -d "$ROOT/src-tauri/icons" ]; then
+  if [ -n "$ROOT" ] && [ -d "$ROOT/src-tauri/icons" ]; then
     for pair in 32:32x32.png 64:64x64.png 128:128x128.png 256:128x128@2x.png 512:icon.png; do
       size="${pair%%:*}"; src="$ROOT/src-tauri/icons/${pair#*:}"
       [ -f "$src" ] || continue
