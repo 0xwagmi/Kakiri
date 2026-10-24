@@ -50,7 +50,7 @@
           "pipewire"
         ],
         "files": {
-          "usr/share/metainfo/com.kakiri.soundboard.metainfo.xml": "metainfo/com.kakiri.soundboard.metainfo.xml"
+          "/usr/share/metainfo/com.kakiri.soundboard.metainfo.xml": "metainfo/com.kakiri.soundboard.metainfo.xml"
         }
       }
     }
