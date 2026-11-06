@@ -4,7 +4,7 @@
 # toolchain, nothing written outside $PREFIX (default ~/.local).
 #
 #   ./install-release.sh                 # latest release, user-level
-#   ./install-release.sh --version v0.1.1
+#   ./install-release.sh --version v0.1.2
 #   ./install-release.sh --appimage      # force the AppImage instead of the .deb
 #   ./install-release.sh --prefix ~/.local
 #
@@ -71,7 +71,7 @@ warn() { printf '%s!%s %s\n' "$C_WARN" "$C_0" "$*"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) shift; VERSION="${1:?--version needs a tag like v0.1.1}" ;;
+    --version) shift; VERSION="${1:?--version needs a tag like v0.1.2}" ;;
     --prefix) shift; PREFIX="${1:?--prefix needs a directory}" ;;
     --appimage) FORCE_APPIMAGE=1 ;;
     -h|--help)

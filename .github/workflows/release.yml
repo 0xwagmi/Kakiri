@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (must already exist, e.g. v0.1.0)"
+        description: "Tag to build (must already exist, e.g. v0.1.2)"
         required: true
       draft:
         description: "Create the release as a draft"

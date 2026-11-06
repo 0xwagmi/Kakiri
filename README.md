@@ -105,7 +105,7 @@ curl -fsSL https://raw.githubusercontent.com/0xwagmi/Kakiri/main/scripts/install
 
 It downloads the ~7 MB `.deb` from the latest release, verifies it against the
 release's `SHA256SUMS`, and installs the binary, icons and menu entry into
-`~/.local` — nothing system-wide, no root. `--version v0.1.1` pins a release,
+`~/.local` — nothing system-wide, no root. `--version v0.1.2` pins a release,
 `--appimage` uses the AppImage instead (needed on non-Debian systems, ~82 MB).
 
 ## Install from source (Linux, no sudo)
@@ -142,8 +142,8 @@ Releases are built by CI, not by hand, and only for a version tag (pushing to
 ```bash
 # 1. bump the version in src-tauri/tauri.conf.json, package.json and Cargo.toml
 # 2. add the release to CHANGELOG.md
-git commit -am "Release v0.1.0"
-git tag -a v0.1.0 -m "Kakiri v0.1.0"
+git commit -am "Release vX.Y.Z"
+git tag -a vX.Y.Z -m "Kakiri vX.Y.Z"
 git push origin dev --follow-tags        # CI builds and publishes
 ```
 
