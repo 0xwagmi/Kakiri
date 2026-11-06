@@ -4,6 +4,15 @@ All notable changes to Kakiri are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Tray icon** (white cat, works with GNOME's appindicator extension): left
+  click toggles the window, the menu has Show / Quit. Closing the window now
+  hides Kakiri instead of quitting, so a soundboard keeps working mid-call;
+  Quit lives in the tray so the app can never be left running with no way back.
+
 ## [0.1.1] — desktop polish (Linux alpha)
 
 Everything a reviewer would poke at in a first release. No audio-path changes.

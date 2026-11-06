@@ -675,6 +675,76 @@ fn set_hotkeys(app: tauri::AppHandle, accelerators: Vec<String>) -> Vec<String> 
         .collect()
 }
 
+/// Hide instead of quitting: a soundboard is useful while its window is closed,
+/// and Quit lives in the tray menu so the app can never become unreachable.
+fn hide_on_close(window: &tauri::WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
+    let w = window.clone();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = w.hide();
+        }
+    });
+    Ok(())
+}
+
+fn toggle_main(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let Some(w) = app.get_webview_window("main") else {
+        return;
+    };
+    if w.is_visible().unwrap_or(false) {
+        let _ = w.hide();
+    } else {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+    use tauri::Manager;
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+    let show = MenuItem::with_id(app, "show", "Show Kakiri", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Kakiri", true, None::<&str>)?;
+    let sep = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(app, &[&show, &sep, &quit])?;
+
+    TrayIconBuilder::with_id("kakiri-tray")
+        .icon(tauri::image::Image::from_bytes(include_bytes!(
+            "../icons/tray-white.png"
+        ))?)
+        // macOS renders "template" icons in the menu bar's own colour
+        .icon_as_template(true)
+        .tooltip("Kakiri")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => toggle_main(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_main(tray.app_handle());
+            }
+        })
+        .build(app)?;
+
+    if let Some(window) = app.get_webview_window("main") {
+        hide_on_close(&window)?;
+    }
+    log::info!("tray icon ready; closing the window keeps Kakiri running");
+    Ok(())
+}
+
 /// Send panics to the log as well, not just to a stderr nobody reads.
 fn install_panic_hook() {
     let previous = std::panic::take_hook();
@@ -762,6 +832,10 @@ pub fn run() {
                 Err(e) => log::warn!("virtual mic status unavailable: {e}"),
             }
             log::info!("output target: {}", if target.is_empty() { "default" } else { &target });
+            // Tray: the app keeps running when the window is closed, and this is
+            // the only way back to it (or out of it).
+            setup_tray(app).map_err(|e| e.to_string())?;
+
             let engine = Engine::new(fmt, make_output(target, fmt));
             app.manage(AppState {
                 engine,

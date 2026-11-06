@@ -37,6 +37,9 @@ were your voice.
 - **Live voice input** mixed into the virtual mic (talk *and* play sounds)
 - Decodes mp3 / m4a / flac / ogg / wav + more via `symphonia` (no ffmpeg)
 
+Closing the window keeps Kakiri running in the tray (left click toggles it, Quit
+is in the tray menu) — a soundboard is most useful while its window is closed.
+
 ## Why Rust
 
 - Single self-contained binary per OS — no Python runtime, no ffmpeg, no
