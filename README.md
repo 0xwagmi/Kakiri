@@ -39,6 +39,8 @@ were your voice.
 
 Closing the window keeps Kakiri running in the tray (left click toggles it, Quit
 is in the tray menu) — a soundboard is most useful while its window is closed.
+On GNOME the tray needs the AppIndicator extension, which Ubuntu ships enabled
+(`gnome-shell-extension-appindicator` on other distributions).
 
 ## Why Rust
 

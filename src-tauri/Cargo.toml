@@ -1,6 +1,6 @@
 [package]
 name = "soundboard"
-version = "0.1.0"
+version = "0.1.2"
 description = "Kakiri Soundboard — play audio through a virtual mic in Discord"
 authors = ["0xwagmi"]
 edition = "2024"
