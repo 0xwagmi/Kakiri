@@ -17,7 +17,10 @@ set -euo pipefail
 
 SRC="${1:?usage: companion-assets.sh <source.mp4> [out-dir]}"
 OUT="${2:-src/lib/assets/companion}"
-SEGMENTS="${SEGMENTS:-idle:8.0:3.5 react:6.3:2.3 poke:0.2:1.4 sleep:14.9:1.5:palindrome}"
+# One loop: the whole dance, cut at 14.6 s rather than 16.4 s because the clip
+# ends in a crouch and looping that back to a standing frame reads as a glitch.
+# Frame 14.6 has the same arms-out pose as frame 0, so the seam is invisible.
+SEGMENTS="${SEGMENTS:-dance:0:14.6}"
 HEIGHT="${HEIGHT:-240}"
 FPS="${FPS:-15}"
 PAD="${PAD:-8}"
@@ -88,10 +91,6 @@ for segment in $SEGMENTS; do
   fi
   printf '  %-6s %.1fs  %s\n' "$name" "$length" "$(du -h "$target" | cut -f1)"
 done
-
-# --- a still of the idle pose, for anyone who turns animation off --------
-ffmpeg -v error -y -ss 9 -i "$SRC" -vf "${base}" -frames:v 1 "${OUT}/idle.png"
-printf '  %-6s %-5s %s\n' "still" "" "$(du -h "${OUT}/idle.png" | cut -f1)"
 
 echo
 echo "wrote $(ls -1 "$OUT" | wc -l) files to $OUT ($(du -sh "$OUT" | cut -f1))"

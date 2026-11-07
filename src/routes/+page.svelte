@@ -844,9 +844,7 @@
     />
   {/if}
 
-  {#if view !== "timeline"}
-    <Companion playing={voices.length > 0} />
-  {/if}
+  <Companion playing={voices.length > 0} />
 
   {#if importOpen}
     <Import
