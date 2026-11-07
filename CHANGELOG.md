@@ -8,13 +8,16 @@ All notable changes to Kakiri are recorded here. The format follows
 
 ### Added
 
-- **Companion**: a small resident in the bottom-right corner. She idles there in
-  a loop and dances while the soundboard is playing.
+- **Companion**: a small resident in the bottom-right corner. She waves once at
+  launch, idles in two alternating loops, dances while something plays and
+  switches to listening with headphones during longer playback. Quiet for five
+  minutes and she sits down, fifteen and she is asleep; with an empty library she
+  points at the grid.
 - `scripts/companion-assets.sh` turns a flat-backdrop clip into the animated
   WebP loops: backdrop colour and crop box are detected, so new footage needs no
-  config, and a 1 px border (which some generators add) is trimmed first because
-  it never keys out and would drag the crop box to the frame edge. 1.9 MB for
-  both states.
+  config, letterbox bars and borders are trimmed by comparing edge strips to the
+  backdrop, and each clip is scaled against a shared reference height so she does
+  not change size between states. Eight loops, 5.1 MB.
 
 ## [0.1.2] — tray icon
 

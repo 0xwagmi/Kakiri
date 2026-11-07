@@ -844,7 +844,7 @@
     />
   {/if}
 
-  <Companion playing={voices.length > 0} />
+  <Companion playing={voices.length > 0} empty={!allLibSounds.length} />
 
   {#if importOpen}
     <Import
