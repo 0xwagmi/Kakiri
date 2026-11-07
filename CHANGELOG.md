@@ -4,6 +4,18 @@ All notable changes to Kakiri are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Companion**: a small resident in the bottom-right corner who reacts to the
+  soundboard — idle sway, a bounce while anything is playing, a wave when you
+  poke her, and a crouch after ten quiet minutes. Silently: poking her must never
+  send audio to the microphone.
+- `scripts/companion-assets.sh` turns a flat-backdrop clip into the four loops:
+  backdrop colour and crop box are detected, so new footage needs no config.
+  972 KB of animated WebP for all four states.
+
 ## [0.1.2] — tray icon
 
 ### Added

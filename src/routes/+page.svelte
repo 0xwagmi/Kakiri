@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
   import SoundCard from "$lib/SoundCard.svelte";
+  import Companion from "$lib/Companion.svelte";
   import Import from "$lib/Import.svelte";
   import catSvg from "$lib/assets/cat.svg?raw";
   import Pads from "$lib/Pads.svelte";
@@ -841,6 +842,10 @@
       onInstallMic={installMic}
       onRemoveMic={removeMic}
     />
+  {/if}
+
+  {#if view !== "timeline"}
+    <Companion playing={voices.length > 0} />
   {/if}
 
   {#if importOpen}
