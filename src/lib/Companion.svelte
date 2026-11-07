@@ -101,7 +101,10 @@
     right: 16px;
     bottom: 12px;
     z-index: 20;
-    height: clamp(150px, 26vh, 240px);
+    /* Native size: the clips are generated at display scale, with a standing
+       subject 240 px tall and shorter poses proportionally smaller, so scaling by
+       height here would blow the lying pose up to 650 px wide. */
+    height: auto;
     width: auto;
     pointer-events: none;
     /* the artwork carries its own alpha, so there is no card behind her */
@@ -112,7 +115,8 @@
   /* narrow windows: she would sit on top of the cards */
   @media (max-width: 720px) {
     .companion {
-      height: 130px;
+      transform: scale(0.68);
+      transform-origin: bottom right;
     }
   }
   @media (prefers-reduced-motion: reduce) {
