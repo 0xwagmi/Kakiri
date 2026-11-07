@@ -8,13 +8,13 @@ All notable changes to Kakiri are recorded here. The format follows
 
 ### Added
 
-- **Companion**: a small resident in the bottom-right corner who reacts to the
-  soundboard — idle sway, a bounce while anything is playing, a wave when you
-  poke her, and a crouch after ten quiet minutes. Silently: poking her must never
-  send audio to the microphone.
-- `scripts/companion-assets.sh` turns a flat-backdrop clip into the four loops:
-  backdrop colour and crop box are detected, so new footage needs no config.
-  972 KB of animated WebP for all four states.
+- **Companion**: a small resident in the bottom-right corner. She idles there in
+  a loop and dances while the soundboard is playing.
+- `scripts/companion-assets.sh` turns a flat-backdrop clip into the animated
+  WebP loops: backdrop colour and crop box are detected, so new footage needs no
+  config, and a 1 px border (which some generators add) is trimmed first because
+  it never keys out and would drag the crop box to the frame edge. 1.9 MB for
+  both states.
 
 ## [0.1.2] — tray icon
 

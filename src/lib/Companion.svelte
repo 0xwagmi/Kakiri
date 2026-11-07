@@ -1,59 +1,61 @@
 <script lang="ts">
   /**
-   * The companion: she dances while the soundboard is playing, and is not there
-   * at all when it is quiet.
+   * The companion: idles in the corner, dances while the soundboard is playing.
    *
-   * Nothing to derive, nothing to time: `playing` comes from the voice list the
-   * page already polls, so the backend needs no new events. Mounting the <img>
-   * only while playing also means every track starts the dance from frame one,
-   * instead of resuming wherever the loop happened to be.
+   * Both states come from the voice list the page already polls, so the backend
+   * needs no new events. Each state is one animated WebP with alpha baked in
+   * (scripts/companion-assets.sh); swapping `src` restarts the loop, which is all
+   * the state machine needs.
    */
   import { onMount } from "svelte";
   import { fade } from "svelte/transition";
+  import idle from "./assets/companion/idle.webp";
   import dance from "./assets/companion/dance.webp";
 
   export let playing = false;
 
-  /** a 200 ms blip would otherwise flash her in and out */
-  const MIN_VISIBLE_MS = 700;
+  /** a 200 ms blip should not flip her into the dance and straight back */
+  const MIN_DANCE_MS = 700;
 
-  let visible = false;
-  let visibleSince = 0;
-  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  let dancing = false;
+  let danceSince = 0;
+  let settle: ReturnType<typeof setTimeout> | undefined;
 
   $: if (playing) {
-    clearTimeout(hideTimer);
-    if (!visible) {
-      visible = true;
-      visibleSince = Date.now();
+    clearTimeout(settle);
+    if (!dancing) {
+      dancing = true;
+      danceSince = Date.now();
     }
-  } else if (visible) {
-    const left = MIN_VISIBLE_MS - (Date.now() - visibleSince);
+  } else if (dancing) {
+    const left = MIN_DANCE_MS - (Date.now() - danceSince);
     if (left <= 0) {
-      visible = false;
+      dancing = false;
     } else {
-      clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => (visible = false), left);
+      clearTimeout(settle);
+      settle = setTimeout(() => (dancing = false), left);
     }
   }
 
+  $: src = dancing ? dance : idle;
+
   onMount(() => {
-    // 1.5 MB of frames: fetch it while nothing is playing so the first sound
-    // brings her up immediately instead of a second late.
-    new Image().src = dance;
-    return () => clearTimeout(hideTimer);
+    // both loops up front: fetching 2 MB mid-gesture would show an empty frame
+    for (const s of [idle, dance]) new Image().src = s;
+    return () => clearTimeout(settle);
   });
 </script>
 
-{#if visible}
+{#key src}
   <img
     class="companion"
-    src={dance}
+    {src}
     alt=""
     draggable="false"
-    transition:fade={{ duration: 180 }}
+    in:fade={{ duration: 130 }}
+    out:fade={{ duration: 130 }}
   />
-{/if}
+{/key}
 
 <style>
   .companion {

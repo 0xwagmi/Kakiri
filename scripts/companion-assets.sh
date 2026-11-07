@@ -24,6 +24,10 @@ SEGMENTS="${SEGMENTS:-dance:0:14.6}"
 HEIGHT="${HEIGHT:-240}"
 FPS="${FPS:-15}"
 PAD="${PAD:-8}"
+# Generated clips often carry a 1 px border in a different colour (one of ours came
+# with a black left edge). It never keys out, and cropdetect then believes the
+# subject spans the whole frame -- so trim the edges before anything else.
+INSET="${INSET:-4}"
 QUALITY="${QUALITY:-78}"
 
 command -v ffmpeg >/dev/null || { echo "companion-assets: ffmpeg is required" >&2; exit 1; }
@@ -36,7 +40,7 @@ echo "source:   $SRC"
 # A 16x16 patch averaged to one pixel: AI-video backdrops carry a little noise,
 # so a single-pixel reading drifts from frame to frame.
 hex=$(ffmpeg -v error -i "$SRC" -frames:v 1 \
-        -vf "crop=16:16:0:0,scale=1:1,format=rgb24" -f rawvideo - \
+        -vf "crop=iw-2*${INSET}:ih-2*${INSET}:${INSET}:${INSET},crop=16:16:0:0,scale=1:1,format=rgb24" -f rawvideo - \
       | od -An -tu1 -N3 | awk '{printf "0x%02X%02X%02X", $1, $2, $3}')
 [ -n "$hex" ] || { echo "companion-assets: could not sample the backdrop" >&2; exit 1; }
 echo "backdrop: $hex"
@@ -51,7 +55,7 @@ echo "backdrop: $hex"
 # filters". cropdetect reports at info level, so drop -v error for this pass.
 crop=$(
   ffmpeg -hide_banner -nostats -loglevel info -i "$SRC" \
-    -vf "colorkey=${hex}:0.10:0.02,format=yuva420p,alphaextract,cropdetect=limit=0.02:round=2:reset=0" \
+    -vf "crop=iw-2*${INSET}:ih-2*${INSET}:${INSET}:${INSET},colorkey=${hex}:0.10:0.02,format=yuva420p,alphaextract,cropdetect=limit=0.02:round=2:reset=0" \
     -f null - 2>&1 \
   | sed -n 's/.*crop=\([0-9]*:[0-9]*:[0-9]*:[0-9]*\).*/\1/p' | tail -1 || true)
 if [ -n "$crop" ]; then
@@ -66,6 +70,7 @@ fi
 # a little air around the union box, clamped to the frame and kept even
 fw=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$SRC" | cut -d, -f1)
 fh=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$SRC" | cut -d, -f1)
+fw=$((fw - 2*INSET)); fh=$((fh - 2*INSET))
 cw=$(( (cw + 2*PAD) / 2 * 2 )); ch=$(( (ch + 2*PAD) / 2 * 2 ))
 cx=$(( cx - PAD )); cy=$(( cy - PAD ))
 [ "$cx" -lt 0 ] && cx=0
@@ -76,7 +81,7 @@ echo "subject:  ${cw}x${ch}+${cx}+${cy}  (scaled to ${HEIGHT}px tall)"
 
 # --- one loop per segment ------------------------------------------------
 # scale by height: she is tall and narrow, so a fixed width would blow her up
-base="colorkey=${hex}:0.10:0.02,format=yuva420p,crop=${cw}:${ch}:${cx}:${cy},scale=-2:${HEIGHT}:flags=lanczos,fps=${FPS}"
+base="crop=iw-2*${INSET}:ih-2*${INSET}:${INSET}:${INSET},colorkey=${hex}:0.10:0.02,format=yuva420p,crop=${cw}:${ch}:${cx}:${cy},scale=-2:${HEIGHT}:flags=lanczos,fps=${FPS}"
 
 for segment in $SEGMENTS; do
   IFS=: read -r name start length effect <<<"$segment"
