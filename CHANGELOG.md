@@ -4,7 +4,7 @@ All notable changes to Kakiri are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.3] — companion
 
 ### Added
 
@@ -17,7 +17,14 @@ All notable changes to Kakiri are recorded here. The format follows
   WebP loops: backdrop colour and crop box are detected, so new footage needs no
   config, letterbox bars and borders are trimmed by comparing edge strips to the
   backdrop, and each clip is scaled against a shared reference height so she does
-  not change size between states. Eight loops, 5.1 MB.
+  not change size between states. Eight loops, 4.4 MB.
+- A **Companion** switch in Settings to hide her; the component unmounts, so the
+  animation tick stops and the decoded frames are released.
+
+### Notes
+
+- The download grows from 7.9 MB to 12.2 MB. That is entirely the eight loops:
+  animated WebP is already compressed, so it does not shrink inside the package.
 
 ## [0.1.2] — tray icon
 
@@ -133,6 +140,7 @@ you can still talk.
 - `ffmpeg` and `yt-dlp` are optional, detected on `PATH`; the app offers to fetch
   yt-dlp itself.
 
+[0.1.3]: https://github.com/0xwagmi/Kakiri/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/0xwagmi/Kakiri/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/0xwagmi/Kakiri/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/0xwagmi/Kakiri/releases/tag/v0.1.0
