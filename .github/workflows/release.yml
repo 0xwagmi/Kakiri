@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (must already exist, e.g. v0.1.2)"
+        description: "Tag to build (must already exist, e.g. v0.1.4)"
         required: true
       draft:
         description: "Create the release as a draft"
@@ -89,47 +89,31 @@ jobs:
           prerelease: ${{ startsWith(inputs.tag || github.ref_name, 'v0.') || contains(inputs.tag || github.ref_name, '-') }}
           draft: ${{ inputs.draft || false }}
           releaseBody: |
-            Download the asset for your distribution:
+            Download the asset for your platform:
 
             | file | who it's for | install |
             |---|---|---|
             | `*_amd64.deb` | Ubuntu / Debian / Mint / Pop!_OS | `sudo apt install ./Kakiri_*.deb` |
             | `*.x86_64.rpm` | Fedora / RHEL / openSUSE | `sudo dnf install ./Kakiri-*.rpm` |
             | `*.AppImage` | anything else, no root | `chmod +x Kakiri_*.AppImage && ./Kakiri_*.AppImage` |
+            | `*_x64-setup.exe` | Windows 10/11, x64 | run the installer, then install **VB-CABLE** |
 
-            Then pick **Soundboard Mic** as your input device in Discord, and turn
-            off Noise Suppression / Echo Cancellation / AGC there.
+            **Linux** — pick **Soundboard Mic** as your input device in Discord and
+            turn off Noise Suppression / Echo Cancellation / AGC there. Needs
+            **PipeWire 1.0+** (Ubuntu 24.04 / Fedora 39 / Arch or newer; the build
+            links glibc 2.39). `ffmpeg` and `yt-dlp` are optional, for video import
+            and page links.
+
+            **Windows** needs a virtual audio cable: Windows has no way for a
+            user-space app to create an audio device. Install
+            [VB-CABLE](https://vb-audio.com/Cable/) (free), set `Send to` to
+            **CABLE Input**, and pick **CABLE Output** as the microphone in
+            Discord. The Windows build is new — please report what breaks.
 
             Verify downloads with `sha256sum -c SHA256SUMS`.
 
-            **Requirements** — Linux, **PipeWire 1.0+** (Ubuntu 24.04 / Fedora 39 /
-            Arch or newer; the build links glibc 2.39). The `.deb` only pulls in
-            webkit/gtk automatically, so install PipeWire yourself if it is not
-            already running: `sudo apt install pipewire`. `ffmpeg` and `yt-dlp`
-            are optional, for video import and page links.
-
-            **Platforms** — Linux only for now: the Windows/macOS audio path is
-            implemented but has not run on real hardware yet.
-
-      - name: Checksums
-        run: |
-          # Plain file names only: the bundle keeps artifacts in deb/, rpm/ and
-          # appimage/, but a user who downloaded the files has them side by side,
-          # so a path like "deb/..." (or a name with spaces, which trips up awk)
-          # makes `sha256sum -c` fail. basename as an argument handles both.
-          cd target/release/bundle
-          : > SHA256SUMS
-          while IFS= read -r f; do
-            printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$(basename "$f")" >> SHA256SUMS
-          done < <(find . -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) | sort)
-          cat SHA256SUMS
-
-      - name: Attach checksums to the release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${{ inputs.tag || github.ref_name }}" \
-            target/release/bundle/SHA256SUMS --clobber
+            **Platforms** — Linux and Windows. macOS is implemented but has not run
+            on real hardware yet.
 
       - name: Collect artifacts for the run page
         uses: actions/upload-artifact@v4
@@ -139,48 +123,83 @@ jobs:
             target/release/bundle/deb/*.deb
             target/release/bundle/rpm/*.rpm
             target/release/bundle/appimage/*.AppImage
-            target/release/bundle/SHA256SUMS
           if-no-files-found: error
 
-  # Windows and macOS stay switched off until their audio path has run on real
-  # hardware. When it has, uncomment below — same free runner minutes, and the
-  # assets land on the same release.
-  #
-  # windows:
-  #   name: Windows (x86_64)
-  #   runs-on: windows-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with: { ref: "${{ inputs.tag || github.ref }}" }
-  #     - uses: actions/setup-node@v4
-  #       with: { node-version: 22, cache: npm }
-  #     - uses: dtolnay/rust-toolchain@stable
-  #     - uses: Swatinem/rust-cache@v2
-  #     - run: npm ci
-  #     - uses: tauri-apps/tauri-action@v0
-  #       env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
-  #       with:
-  #         tagName: ${{ inputs.tag || github.ref_name }}
-  #         releaseName: "Kakiri ${{ inputs.tag || github.ref_name }}"
-  #         prerelease: true
-  #
-  # macos:
-  #   name: macOS (universal)
-  #   runs-on: macos-latest
-  #   strategy: { matrix: { target: [aarch64-apple-darwin, x86_64-apple-darwin] } }
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #       with: { ref: "${{ inputs.tag || github.ref }}" }
-  #     - uses: actions/setup-node@v4
-  #       with: { node-version: 22, cache: npm }
-  #     - uses: dtolnay/rust-toolchain@stable
-  #       with: { targets: "${{ matrix.target }}" }
-  #     - uses: Swatinem/rust-cache@v2
-  #     - run: npm ci
-  #     - uses: tauri-apps/tauri-action@v0
-  #       env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
-  #       with:
-  #         args: --target ${{ matrix.target }}
-  #         tagName: ${{ inputs.tag || github.ref_name }}
-  #         releaseName: "Kakiri ${{ inputs.tag || github.ref_name }}"
-  #         prerelease: true
+  windows:
+    name: Windows (x86_64)
+    # Native build: cross-compiling from Linux needs the mingw toolchain, and the
+    # Windows audio path (cpal) is only ever exercised for real on Windows.
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - run: npm ci
+
+      - name: Check that the tag matches the app version
+        run: |
+          $tag = "${{ inputs.tag || github.ref_name }}"
+          $version = node -p "require('./src-tauri/tauri.conf.json').version"
+          Write-Host "tag=$tag version=$version"
+          if ("v$version" -ne $tag) {
+            Write-Error "tag $tag does not match tauri.conf.json version $version — bump it first"
+            exit 1
+          }
+
+      - name: Build tests before shipping anything
+        run: |
+          cargo test --workspace --release --quiet
+          npm run check
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # nsis only: the .msi needs WiX, and the .exe is what people expect.
+          args: --bundles nsis
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: "Kakiri ${{ inputs.tag || github.ref_name }}"
+          prerelease: ${{ startsWith(inputs.tag || github.ref_name, 'v0.') || contains(inputs.tag || github.ref_name, '-') }}
+          draft: ${{ inputs.draft || false }}
+
+      - name: Collect artifacts for the run page
+        uses: actions/upload-artifact@v4
+        with:
+          name: kakiri-windows-${{ inputs.tag || github.ref_name }}
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+  # One checksum file for every platform, assembled from the release itself, so
+  # it cannot drift from what was actually published.
+  checksums:
+    name: Checksums
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          mkdir -p assets && cd assets
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --clobber
+          # Plain file names: whoever downloaded these has them side by side, so a
+          # path -- or awk, which splits on spaces -- breaks `sha256sum -c`.
+          : > SHA256SUMS
+          for f in *.deb *.rpm *.AppImage *.exe *.msi; do
+            [ -f "$f" ] && printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f" >> SHA256SUMS
+          done
+          cat SHA256SUMS
+          gh release upload "$tag" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
