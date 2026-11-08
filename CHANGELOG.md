@@ -4,7 +4,7 @@ All notable changes to Kakiri are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.5]
 
 ### Added
 
@@ -14,6 +14,9 @@ All notable changes to Kakiri are recorded here. The format follows
   (10 ms) of added latency. It replaces an Easy Effects chain, which cost an
   extra process *and* an extra graph hop. Turn Discord's own suppression off
   afterwards — it would gate the sounds you play.
+  A DeepFilterNet engine was measured and dropped: 44 % of a core on a laptop
+  against RNNoise's 1 %, for a quality difference Discord's 64 kbps Opus would
+  largely erase.
 - **The companion speaks.** Status lines ("Added music", a decode error, "stopped
   FEIN") appear as a bubble above her head with the action button inside it,
   instead of a line in the far corner. When she is switched off in Settings the
@@ -181,6 +184,7 @@ you can still talk.
 - `ffmpeg` and `yt-dlp` are optional, detected on `PATH`; the app offers to fetch
   yt-dlp itself.
 
+[0.1.5]: https://github.com/0xwagmi/Kakiri/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/0xwagmi/Kakiri/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/0xwagmi/Kakiri/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/0xwagmi/Kakiri/compare/v0.1.1...v0.1.2
