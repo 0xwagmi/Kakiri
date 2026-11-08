@@ -4,6 +4,21 @@ All notable changes to Kakiri are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Noise reduction (RNNoise)** for the live mic, in Settings. `nnnoiseless`, the
+  pure-Rust rnnoise port, runs on samples the engine already captures: −10.6 dB
+  of noise on a white-noise test, ~1 % of a core, and one 480-sample frame
+  (10 ms) of added latency. It replaces an Easy Effects chain, which cost an
+  extra process *and* an extra graph hop. Turn Discord's own suppression off
+  afterwards — it would gate the sounds you play.
+- **The companion speaks.** Status lines ("Added music", a decode error, "stopped
+  FEIN") appear as a bubble above her head with the action button inside it,
+  instead of a line in the far corner. When she is switched off in Settings the
+  old bottom line still renders.
+
 ## [0.1.4] — Windows
 
 ### Added
