@@ -855,7 +855,16 @@
   {/if}
 
   {#if companion}
-    <Companion playing={voices.length > 0} empty={!allLibSounds.length} />
+    <Companion
+      playing={voices.length > 0}
+      empty={!allLibSounds.length}
+      message={toast}
+      action={toastAction}
+      onAction={() => {
+        toast = "";
+        toastAction = null;
+      }}
+    />
   {/if}
 
   {#if importOpen}
@@ -909,7 +918,7 @@
         <button class="x" onclick={() => stopVoice(v.id)}><X size={12} /></button>
       </span>
     {/each}
-    {#if toast}
+    {#if toast && !companion}
       <span class="toast">
         {toast}
         {#if toastAction}
