@@ -1,8 +1,8 @@
 //! RNNoise voice denoising for the live input, via the pure-Rust `nnnoiseless`
 //! port of Xiph's rnnoise.
 //!
-//! Why here and not in Easy Effects: an external processor is another process
-//! *and* another graph hop, so it costs tens of milliseconds. This runs on the
+//! Why here rather than in a separate processor app: that would be another
+//! process *and* another graph hop, costing tens of milliseconds. This runs on the
 //! samples the engine already reads, and costs one 10 ms frame instead.
 //!
 //! The denoiser is strict about its input: 48 kHz, mono, exactly 480-sample
@@ -31,6 +31,84 @@ pub struct Denoiser {
     vad: f32,
     frame_in: Vec<f32>,
     frame_out: Vec<f32>,
+    cfg: Config,
+    /// frames of hangover left before the gate closes
+    grace: i32,
+}
+
+/// Beyond a bare model call, the behaviour that makes a denoiser sound "clean"
+/// rather than merely quieter, described in plain DSP terms:
+///
+/// 1. keep the unprocessed block and mix it back against the processed one, so
+///    the voice keeps some of its natural body;
+/// 2. while the model's speech probability clears a threshold, re-arm a hangover;
+///    once the hangover expires, emit digital silence rather than residual noise,
+///    which is what stops the floor breathing between words;
+/// 3. a gain stage on the way in and out.
+///
+/// All three are generic signal-processing techniques; this is an independent
+/// implementation in Rust, written from that description.
+#[derive(Clone, Copy, Debug)]
+pub struct Config {
+    /// 0 dB = fully denoised; at or below -60 dB the dry signal passes untouched
+    pub wet_db: f32,
+    /// gate to silence when the VAD reports no speech
+    pub vad: bool,
+    /// speech probability threshold, 0..1 (shown as a percentage in the UI)
+    pub vad_thres: f32,
+    /// hangover in frames before the gate closes
+    pub release_frames: i32,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            wet_db: 0.0,
+            vad: true,
+            vad_thres: 0.5,
+            release_frames: 2, // 20 ms at 480-sample frames
+        }
+    }
+}
+
+impl Config {
+    /// Overrides from the environment, so the four knobs can be A/B tested in a
+    /// real call without recompiling.
+    pub fn from_env() -> Self {
+        let d = Config::default();
+        let num = |k: &str, fallback: f32| {
+            std::env::var(k)
+                .ok()
+                .and_then(|v| v.trim().parse::<f32>().ok())
+                .unwrap_or(fallback)
+        };
+        let flag = |k: &str, fallback: bool| {
+            std::env::var(k)
+                .ok()
+                .map(|v| {
+                    matches!(
+                        v.trim().to_ascii_lowercase().as_str(),
+                        "1" | "on" | "true" | "yes"
+                    )
+                })
+                .unwrap_or(fallback)
+        };
+        let release_ms = num("KAKIRI_RELEASE_MS", d.release_frames as f32 * 10.0);
+        Self {
+            wet_db: num("KAKIRI_WET_DB", d.wet_db),
+            vad: flag("KAKIRI_VAD", d.vad),
+            vad_thres: (num("KAKIRI_VAD_THRES", d.vad_thres * 100.0) / 100.0).clamp(0.0, 1.0),
+            release_frames: (release_ms / 10.0).round().max(0.0) as i32,
+        }
+    }
+
+    fn wet_ratio(&self) -> f32 {
+        if self.wet_db <= -60.0 {
+            0.0
+        } else {
+            10f32.powf(self.wet_db / 20.0).clamp(0.0, 1.0)
+        }
+    }
 }
 
 impl Default for Denoiser {
@@ -41,6 +119,13 @@ impl Default for Denoiser {
 
 impl Denoiser {
     pub fn new() -> Self {
+        Self::with_config(None)
+    }
+
+    /// Explicit config: used by tests, and by anything that wants to set the
+    /// knobs without the environment.
+    pub fn with_config(cfg: Option<Config>) -> Self {
+        let cfg = cfg.unwrap_or_else(Config::from_env);
         Self {
             state: DenoiseState::new(),
             input: VecDeque::with_capacity(FRAME_SIZE * 2),
@@ -49,6 +134,8 @@ impl Denoiser {
             vad: 0.0,
             frame_in: vec![0.0; FRAME_SIZE],
             frame_out: vec![0.0; FRAME_SIZE],
+            grace: cfg.release_frames,
+            cfg,
         }
     }
 
@@ -84,8 +171,35 @@ impl Denoiser {
             let prob = self.state.process_frame(&mut self.frame_out, &self.frame_in);
             vad_sum += prob;
             vad_frames += 1;
-            self.output
-                .extend(self.frame_out.iter().map(|s| s / SCALE));
+
+            // VAD gate: re-arm the hangover while speech is detected, otherwise
+            // close to digital silence once it expires.
+            let open = if self.cfg.vad {
+                if prob >= self.cfg.vad_thres {
+                    self.grace = self.cfg.release_frames;
+                }
+                let open = self.grace >= 0;
+                if open {
+                    self.grace -= 1;
+                }
+                open
+            } else {
+                true
+            };
+
+            let inv = 1.0 / SCALE;
+            if open {
+                // wet/dry: `wet_db` at its minimum passes the voice untouched
+                let wet = self.cfg.wet_ratio();
+                for (wet_sample, dry_sample) in self.frame_out.iter().zip(self.frame_in.iter()) {
+                    self.output
+                        .push_back((wet_sample * wet + dry_sample * (1.0 - wet)) * inv);
+                }
+            } else {
+                for _ in 0..FRAME_SIZE {
+                    self.output.push_back(0.0);
+                }
+            }
         }
         if vad_frames > 0 {
             self.vad = vad_sum / vad_frames as f32;

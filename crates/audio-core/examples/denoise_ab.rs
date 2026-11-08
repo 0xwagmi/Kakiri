@@ -33,10 +33,16 @@ fn main() {
     }
 
     let mut d = audio_core::denoise::Denoiser::new();
+    let mut vad_sum = 0.0f64;
+    let mut vad_n = 0usize;
+    let mut vad_max = 0.0f32;
     let mut out = Vec::with_capacity(input.len());
     for block in input.chunks(1024) {
         let mut buf = block.to_vec();
-        d.process(&mut buf, 1);
+        let v = d.process(&mut buf, 1);
+        vad_sum += v as f64;
+        vad_n += 1;
+        vad_max = vad_max.max(v);
         out.extend_from_slice(&buf);
     }
 
@@ -46,4 +52,7 @@ fn main() {
     println!("  input   : {:.1} dBFS", rms_db(&input[skip..]));
     println!("  denoised: {:.1} dBFS", rms_db(&out[skip..]));
     println!("  change  : {:.1} dB", rms_db(&out[skip..]) - rms_db(&input[skip..]));
+    if vad_n > 0 {
+        println!("  vad     : mean {:.2}, max {:.2}  (threshold is KAKIRI_VAD_THRES/100)", vad_sum / vad_n as f64, vad_max);
+    }
 }
