@@ -91,9 +91,8 @@
     display: grid;
     place-items: center;
     overflow: hidden;
-    color: var(--accent);
+    color: var(--muted);
     background: var(--panel-3);
-    background: color-mix(in srgb, var(--accent) 13%, transparent);
   }
   .thumb img {
     width: 100%;

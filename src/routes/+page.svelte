@@ -757,7 +757,7 @@
     <aside class="sidebar">
       <div class="side-head">
         <span>Playlists</span>
-        <button class="link" onclick={() => (importOpen = true)} title="Add sounds from a file or link">
+        <button class="primary sm" onclick={() => (importOpen = true)} title="Add sounds from a file or link">
           <Download size={13} /> Import
         </button>
         <button class="link" onclick={addFolder} title="Add a folder to the library">
@@ -1014,18 +1014,31 @@
     cursor: pointer;
   }
 
+  /* Default buttons are neutral surfaces. The accent is for state and for the one
+     primary action, not for every button on screen. */
   button {
-    background: linear-gradient(180deg, var(--accent-2), var(--accent));
+    background: var(--panel-3);
     color: #fff; border: 0; border-radius: 9px;
     padding: 7px 12px; font-size: 13px; cursor: pointer;
     transition: filter .15s ease;
   }
   button:hover:not(:disabled) { filter: brightness(1.08); }
   button:disabled { opacity: .45; cursor: default; }
-  button.ghost { background: var(--panel-3); color: var(--text-2); }
-  button.ghost.on { background: var(--accent); color: #fff; }
+  button.ghost { background: transparent; border-color: transparent; color: var(--text-2); }
+  /* an active toggle is a state, so it gets a tint and a hairline -- not a slab */
+  button.ghost.on {
+    background: var(--accent-dim);
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    color: var(--accent-2);
+  }
+  button.primary {
+    background: linear-gradient(180deg, var(--accent-2), var(--accent));
+    border-color: transparent;
+    color: #fff;
+  }
   button.stop { background: var(--danger); }
-  button.link { background: none; color: var(--accent-2); padding: 0; }
+  button.link { background: none; border-color: transparent; color: var(--accent-2); padding: 0; }
+  button.sm { padding: 3px 9px; font-size: 11.5px; border-radius: 7px; display: inline-flex; align-items: center; gap: 5px; }
   button.x { background: none; color: var(--muted); padding: 0 4px; }
 
   .banner {
@@ -1050,7 +1063,10 @@
     padding: 6px 10px; font-size: 13px; cursor: pointer; border-radius: 6px; margin: 0 6px;
   }
   .nav:hover { background: var(--panel-2); }
-  .nav.active { background: var(--accent-dim); }
+  .nav.active {
+    background: var(--panel-3);
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
   :global(.nav-name) { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   :global(.count) { font-size: 11px; color: var(--muted); }
 
