@@ -4,6 +4,32 @@ All notable changes to Kakiri are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] — Windows
+
+### Added
+
+- **Windows build.** Built natively on `windows-latest` and shipped as a
+  `*_x64-setup.exe` next to the Linux packages. Windows has no way for a
+  user-space app to create an audio device, so it needs **VB-CABLE**: set
+  `Send to` to `CABLE Input` and pick `CABLE Output` in Discord. Untested on real
+  hardware — this build exists so it can be tested.
+
+### Changed
+
+- **Accent discipline.** The accent used to do five jobs at once (logo, active
+  tab, Monitor, selected folder, every artwork tile), so nothing read as
+  important. Now one filled button — Import — carries it, active toggles get a
+  tint and a hairline, the selected folder is a neutral surface with a 2px accent
+  edge, and artwork tiles are neutral.
+- `SHA256SUMS` is generated once, from the published assets, so it cannot drift
+  from what was actually shipped.
+
+### Notes
+
+- `ci.yml` compiles both platforms on every push to `dev`. Windows had never been
+  compiled before this release; a tag was the first place a break would show up.
+- Version traps: all four version files must be bumped together.
+
 ## [0.1.3] — companion
 
 ### Added
@@ -140,6 +166,7 @@ you can still talk.
 - `ffmpeg` and `yt-dlp` are optional, detected on `PATH`; the app offers to fetch
   yt-dlp itself.
 
+[0.1.4]: https://github.com/0xwagmi/Kakiri/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/0xwagmi/Kakiri/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/0xwagmi/Kakiri/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/0xwagmi/Kakiri/compare/v0.1.0...v0.1.1
