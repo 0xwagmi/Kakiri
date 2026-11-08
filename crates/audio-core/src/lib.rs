@@ -6,6 +6,7 @@
 
 pub mod bus;
 pub mod decode;
+pub mod denoise;
 pub mod devices;
 pub mod engine;
 pub mod import;

@@ -65,6 +65,7 @@
   let micGain = 1.0;
   let retrigger = "layer";
   let companion = true;
+  let denoise = false;
   let theme = "default";
 
   const retriggerOpts = [
@@ -105,7 +106,7 @@
       LS_PREFS,
       JSON.stringify({
           target, monitorOn, monitorTarget, loop, masterGain,
-          micMix, micSource, micGain, retrigger, theme, companion,
+          micMix, micSource, micGain, retrigger, theme, companion, denoise,
         }),
     );
   }
@@ -514,6 +515,7 @@
         retrigger = p.retrigger ?? retrigger;
         theme = p.theme ?? theme;
         companion = p.companion ?? companion;
+        denoise = p.denoise ?? denoise;
       } catch {
         /* ignore */
       }
@@ -526,6 +528,8 @@
         /* ignore */
       }
     }
+    // Denoise is engine state, not UI state: restore it before any audio flows.
+    if (denoise) invoke("set_denoise", { on: true }).catch(() => {});
     // Master volume lives in the mixer (render time), so seed it from prefs.
     try {
       await invoke("set_master_gain", { gain: masterGain });
@@ -849,6 +853,12 @@
       {companion}
       onCompanion={(v) => {
         companion = v;
+        savePrefs();
+      }}
+      {denoise}
+      onDenoise={(v) => {
+        denoise = v;
+        invoke("set_denoise", { on: v }).catch(() => {});
         savePrefs();
       }}
     />

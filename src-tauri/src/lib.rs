@@ -252,6 +252,20 @@ fn set_input_gain(state: tauri::State<'_, AppState>, gain: f32) -> f32 {
     gain
 }
 
+/// RNNoise on the live input: the denoiser Easy Effects offers, applied to the
+/// samples the engine already captured -- one 10 ms frame, no extra graph hop.
+#[tauri::command]
+fn set_denoise(state: tauri::State<'_, AppState>, on: bool) -> bool {
+    state.engine.set_denoise(on);
+    log::info!("[mic] noise reduction {}", if on { "on" } else { "off" });
+    on
+}
+
+#[tauri::command]
+fn denoise_status(state: tauri::State<'_, AppState>) -> bool {
+    state.engine.denoise_on()
+}
+
 #[tauri::command]
 fn input_status(state: tauri::State<'_, AppState>) -> bool {
     state.engine.input_active()
@@ -854,6 +868,8 @@ pub fn run() {
             monitor_status,
             set_input,
             set_input_gain,
+            set_denoise,
+            denoise_status,
             input_status,
             play_test_tone,
             default_roots,

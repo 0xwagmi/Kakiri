@@ -78,6 +78,8 @@ pub struct Engine {
     input: Arc<Mutex<InputSlot>>,
     input_ring: Arc<Mutex<InputRing>>,
     input_gain: Arc<AtomicU32>,
+    /// RNNoise on the live input. Toggled live; the reader thread picks it up.
+    denoise: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
     next_id: AtomicU64,
     writer: Mutex<Option<JoinHandle<()>>>,
@@ -100,6 +102,7 @@ impl Engine {
             input: Arc::new(Mutex::new(InputSlot { input: None })),
             input_ring: Arc::new(Mutex::new(InputRing::new(format.channels as usize))),
             input_gain: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            denoise: Arc::new(AtomicBool::new(false)),
             running: Arc::new(AtomicBool::new(true)),
             next_id: AtomicU64::new(1),
             writer: Mutex::new(None),
@@ -175,6 +178,8 @@ impl Engine {
 
     fn spawn_reader(self: Arc<Self>) {
         let block = BLOCK_FRAMES * self.format.channels as usize;
+        let format_channels = self.format.channels as usize;
+        let denoise_on = self.denoise.clone();
         let input = self.input.clone();
         let ring = self.input_ring.clone();
         let running = self.running.clone();
@@ -183,6 +188,8 @@ impl Engine {
             .name("audio-input".into())
             .spawn(move || {
                 let mut buf = vec![0f32; block];
+                let channels = format_channels;
+                let mut den = crate::denoise::Denoiser::new();
                 while running.load(Ordering::Relaxed) {
                     let n = {
                         let mut slot = input.lock().unwrap();
@@ -199,6 +206,9 @@ impl Engine {
                         }
                     };
                     if n > 0 {
+                        if denoise_on.load(Ordering::Relaxed) {
+                            den.process(&mut buf[..n], channels);
+                        }
                         ring.lock().unwrap().push(&buf[..n]);
                     } else {
                         thread::sleep(INPUT_POLL);
@@ -255,6 +265,15 @@ impl Engine {
 
     pub fn input_active(&self) -> bool {
         self.input.lock().unwrap().input.is_some()
+    }
+
+    /// RNNoise on the live input. Takes effect on the next captured block.
+    pub fn set_denoise(&self, on: bool) {
+        self.denoise.store(on, Ordering::Relaxed);
+    }
+
+    pub fn denoise_on(&self) -> bool {
+        self.denoise.load(Ordering::Relaxed)
     }
 
     pub fn set_input_gain(&self, gain: f32) {

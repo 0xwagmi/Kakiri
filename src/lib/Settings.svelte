@@ -11,6 +11,8 @@
   export let onRemoveMic: () => void = () => {};
   export let companion = true;
   export let onCompanion: (v: boolean) => void = () => {};
+  export let denoise = false;
+  export let onDenoise: (v: boolean) => void = () => {};
 
   type MicStatus = {
     present: boolean;
@@ -67,6 +69,22 @@
 
   <section>
     <h2>Virtual microphone</h2>
+    <div class="row" style="margin-top:10px">
+      <button
+        class="toggle"
+        class:on={denoise}
+        role="switch"
+        aria-checked={denoise}
+        onclick={() => onDenoise(!denoise)}
+      >
+        <span class="track"><span class="knob"></span></span>
+        <span>Noise reduction (RNNoise)</span>
+      </button>
+    </div>
+    <p class="muted">
+      Cleans your voice before it reaches the virtual mic, so Discord's own suppression can stay
+      off — it would otherwise gate the sounds you play.
+    </p>
     {#if !mic}
       <p class="muted">Checking…</p>
     {:else if !mic.can_manage}
