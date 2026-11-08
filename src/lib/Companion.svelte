@@ -31,6 +31,10 @@
   export let playing = false;
   /** the library has no sounds yet: she points at the empty grid */
   export let empty = false;
+  /** a status line ("Added music", an error) shown as a speech bubble */
+  export let message = "";
+  export let action: { label: string; run: () => void } | null = null;
+  export let onAction: () => void = () => {};
 
   type Mood = "wave" | "idle" | "idle_b" | "listen" | "dance" | "point" | "sit" | "sleep";
   const CLIP: Record<Mood, string> = {
@@ -84,23 +88,107 @@
   });
 </script>
 
-{#key mood}
-  <img
-    class="companion"
-    src={CLIP[mood]}
-    alt=""
-    draggable="false"
-    in:fade={{ duration: 130 }}
-    out:fade={{ duration: 130 }}
-  />
-{/key}
+<div class="corner">
+  {#if message}
+    <div class="bubble" role="status" aria-live="polite">
+      <span>{message}</span>
+      {#if action}
+        <button
+          class="act"
+          onclick={() => {
+            const a = action;
+            onAction();
+            a?.run();
+          }}>{action.label}</button
+        >
+      {/if}
+    </div>
+  {/if}
+
+  <div class="stage">
+    {#key mood}
+      <img
+        class="companion"
+        src={CLIP[mood]}
+        alt=""
+        draggable="false"
+        in:fade={{ duration: 130 }}
+        out:fade={{ duration: 130 }}
+      />
+    {/key}
+  </div>
+</div>
 
 <style>
-  .companion {
+  /* she and her bubble share one anchored column, so the bubble sits just above
+     whatever height the current pose happens to be */
+  .corner {
     position: fixed;
     right: 16px;
     bottom: 12px;
     z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 10px;
+    pointer-events: none;
+  }
+  .bubble {
+    position: relative;
+    pointer-events: auto;
+    max-width: 230px;
+    background: var(--panel-3, #22262b);
+    border: 1px solid var(--border, #2f3336);
+    color: var(--text, #e7e7ee);
+    font-size: 12.5px;
+    line-height: 1.45;
+    padding: 8px 11px;
+    border-radius: 12px;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.42);
+    animation: bubble-in 140ms ease-out;
+  }
+  /* the tail: a rotated square, so it inherits the border and fill */
+  .bubble::after {
+    content: "";
+    position: absolute;
+    right: 22px;
+    bottom: -6px;
+    width: 11px;
+    height: 11px;
+    background: inherit;
+    border-right: 1px solid var(--border, #2f3336);
+    border-bottom: 1px solid var(--border, #2f3336);
+    transform: rotate(45deg);
+  }
+  @keyframes bubble-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+  }
+  .act {
+    display: block;
+    margin-top: 6px;
+    padding: 2px 8px;
+    font-size: 11.5px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: var(--accent-dim, #2e2350);
+    color: var(--accent-2, #b79bff);
+    cursor: pointer;
+  }
+  /* Both the outgoing and incoming pose occupy the same grid cell during the
+     cross-fade. In normal flow they would stack, so she was shoved upwards for
+     130 ms every time the mood changed. */
+  .stage {
+    display: grid;
+    justify-items: end;
+    align-items: end;
+  }
+  .stage > .companion {
+    grid-area: 1 / 1;
+  }
+  .companion {
     /* Native size: the clips are generated at display scale, with a standing
        subject 240 px tall and shorter poses proportionally smaller, so scaling by
        height here would blow the lying pose up to 650 px wide. */
@@ -115,8 +203,11 @@
   /* narrow windows: she would sit on top of the cards */
   @media (max-width: 720px) {
     .companion {
-      transform: scale(0.68);
-      transform-origin: bottom right;
+      max-height: 150px;
+      width: auto;
+    }
+    .bubble {
+      max-width: 180px;
     }
   }
   @media (prefers-reduced-motion: reduce) {
