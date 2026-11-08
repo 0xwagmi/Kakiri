@@ -9,6 +9,8 @@
   export let micBusy = false;
   export let onInstallMic: () => void = () => {};
   export let onRemoveMic: () => void = () => {};
+  export let companion = true;
+  export let onCompanion: (v: boolean) => void = () => {};
 
   type MicStatus = {
     present: boolean;
@@ -44,6 +46,23 @@
         </button>
       {/each}
     </div>
+  </section>
+
+  <section>
+    <h2>Companion</h2>
+    <div class="row">
+      <button
+        class="toggle"
+        class:on={companion}
+        role="switch"
+        aria-checked={companion}
+        onclick={() => onCompanion(!companion)}
+      >
+        <span class="track"><span class="knob"></span></span>
+        <span>{companion ? "Shown" : "Hidden"}</span>
+      </button>
+    </div>
+    <p class="muted">She idles in the corner and reacts to playback. Purely cosmetic.</p>
   </section>
 
   <section>
@@ -138,6 +157,40 @@
   .tname { font-size: 13px; }
   .tick { position: absolute; top: 8px; right: 8px; color: var(--accent-2); }
   .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  /* borderless switch: only the knob and the track colour move */
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .toggle.on { color: var(--text); }
+  .track {
+    position: relative;
+    width: 32px;
+    height: 18px;
+    border-radius: 999px;
+    background: var(--border);
+    transition: background 140ms ease;
+  }
+  .toggle.on .track { background: var(--accent); }
+  .knob {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 140ms ease;
+  }
+  .toggle.on .knob { transform: translateX(14px); }
+  .toggle:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 4px; border-radius: 6px; }
   .ok { color: var(--ok); font-size: 12px; }
   .muted { color: var(--muted); font-size: 12px; line-height: 1.5; }
 </style>

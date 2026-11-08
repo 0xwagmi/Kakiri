@@ -64,6 +64,7 @@
   let micSource = "";
   let micGain = 1.0;
   let retrigger = "layer";
+  let companion = true;
   let theme = "default";
 
   const retriggerOpts = [
@@ -102,7 +103,10 @@
   function savePrefs() {
     localStorage.setItem(
       LS_PREFS,
-      JSON.stringify({ target, monitorOn, monitorTarget, loop, masterGain, micMix, micSource, micGain, retrigger, theme }),
+      JSON.stringify({
+          target, monitorOn, monitorTarget, loop, masterGain,
+          micMix, micSource, micGain, retrigger, theme, companion,
+        }),
     );
   }
 
@@ -509,6 +513,7 @@
         micGain = p.micGain ?? micGain;
         retrigger = p.retrigger ?? retrigger;
         theme = p.theme ?? theme;
+        companion = p.companion ?? companion;
       } catch {
         /* ignore */
       }
@@ -841,10 +846,17 @@
       micBusy={busy}
       onInstallMic={installMic}
       onRemoveMic={removeMic}
+      {companion}
+      onCompanion={(v) => {
+        companion = v;
+        savePrefs();
+      }}
     />
   {/if}
 
-  <Companion playing={voices.length > 0} empty={!allLibSounds.length} />
+  {#if companion}
+    <Companion playing={voices.length > 0} empty={!allLibSounds.length} />
+  {/if}
 
   {#if importOpen}
     <Import
