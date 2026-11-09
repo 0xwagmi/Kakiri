@@ -144,6 +144,13 @@
             ? "Last.fm tag station"
             : "Deezer search";
 
+  /** A cover that fails to load (blocked by CSP, offline, expired) disappears
+      rather than leaving a broken square. */
+  function hideBroken(e: Event) {
+    const el = e.currentTarget as HTMLImageElement | null;
+    if (el) el.style.display = "none";
+  }
+
   const fmt = (s: number) => {
     if (!s) return "—";
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -793,7 +800,7 @@
         <div class="hero-row">
         <button class="hero" onclick={() => void play(0)}>
           <span class="hero-art">
-            {#if hero.artwork}<img src={hero.artwork} alt="" />{:else}<Music size={30} />{/if}
+            {#if hero.artwork}<img src={hero.artwork} alt="" onerror={hideBroken} />{:else}<Music size={30} />{/if}
           </span>
           <span class="hero-meta">
             <span class="hero-kicker">Start here</span>
@@ -825,7 +832,7 @@
           {#each cards as t, i (t.id)}
             <button class="card" class:playing={current?.id === t.id} onclick={() => void play(i + 1)}>
               <span class="card-art">
-                {#if t.artwork}<img src={t.artwork} alt="" loading="lazy" />{:else}<Music size={18} />{/if}
+                {#if t.artwork}<img src={t.artwork} alt="" loading="lazy" onerror={hideBroken} />{:else}<Music size={18} />{/if}
                 <span class="card-play"><Play size={15} /></span>
               </span>
               <span class="card-title" title={t.title}>{t.title}</span>
@@ -871,7 +878,7 @@
               </span>
               <span class="c-ttl">
                 <span class="thumb">
-                  {#if t.artwork}<img src={t.artwork} alt="" loading="lazy" />{:else}<Music size={13} />{/if}
+                  {#if t.artwork}<img src={t.artwork} alt="" loading="lazy" onerror={hideBroken} />{:else}<Music size={13} />{/if}
                 </span>
                 <span class="ttl-wrap">
                   <span class="ttl" title={t.title}>{t.title}</span>
@@ -969,7 +976,7 @@
       <div class="now-track">
         <div class="now-art">
           {#if current.artwork}
-            <img src={current.artwork} alt="" />
+            <img src={current.artwork} alt="" onerror={hideBroken} />
           {:else}
             <Music size={16} />
           {/if}

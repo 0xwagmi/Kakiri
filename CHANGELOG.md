@@ -53,6 +53,10 @@ All notable changes to Kakiri are recorded here. The format follows
 
 ### Fixed
 
+- **Covers were blank in the packaged app.** The content security policy only
+  allowed `self`/`data:` images, so every remote cover was silently blocked —
+  visible only in a real build, never in `tauri dev`. Cover hosts are allowed now,
+  and an image that still fails hides itself instead of leaving an empty tile.
 - Clicking a track played the **previously selected** one (`current` was read one
   flush before the assignment that changed it).
 - Deleting a save left its "saved" mark behind, so the track could not be
