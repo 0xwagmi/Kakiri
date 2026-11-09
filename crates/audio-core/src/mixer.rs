@@ -156,6 +156,16 @@ impl Mixer {
         });
     }
 
+    pub fn set_paused(&mut self, id: VoiceId, paused: bool) {
+        for v in &mut self.voices {
+            if v.id == id {
+                if let VoiceSource::Stream(sv) = &mut v.source {
+                    sv.set_paused(paused);
+                }
+            }
+        }
+    }
+
     pub fn stop(&mut self, id: VoiceId) {
         for v in &mut self.voices {
             if v.id == id {
@@ -306,7 +316,10 @@ impl Mixer {
                 }
                 VoiceSource::Stream(sv) => {
                     let n = sv.read(&mut scratch[..mic.len()]);
-                    if n == 0 && sv.eof() {
+                    // `eof` means the decoder finished, not the playback: with the
+                    // file fully buffered, a paused voice reads 0 while EOF is
+                    // already set, so paused must veto "done" explicitly.
+                    if n == 0 && sv.eof() && !sv.paused() {
                         v.done = true;
                         continue;
                     }

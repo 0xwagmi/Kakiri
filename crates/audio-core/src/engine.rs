@@ -321,6 +321,33 @@ impl Engine {
 
     /// Start a streaming voice that begins `skip_secs` into the file.
     #[allow(clippy::too_many_arguments)]
+    /// Play a resolved stream URL; returns the voice, plus how long it took to
+    /// buffer the first audio.
+    pub fn play_url_stream(
+        &self,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        url: String,
+        gain: f32,
+        looped: bool,
+        route: Route,
+        cache: Option<std::path::PathBuf>,
+    ) -> Result<(VoiceId, std::time::Duration)> {
+        let (voice, took) = crate::stream::spawn_url(
+            url,
+            self.format,
+            looped,
+            std::time::Duration::from_millis(6000),
+            cache,
+        )?;
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.mixer
+            .lock()
+            .unwrap()
+            .add_stream(id, key.into(), label.into(), voice, gain, looped, route);
+        Ok((id, took))
+    }
+
     pub fn play_stream_from(
         &self,
         key: impl Into<String>,
@@ -346,6 +373,11 @@ impl Engine {
     }
     pub fn is_key_active(&self, key: &str) -> bool {
         self.mixer.lock().unwrap().is_key_active(key)
+    }
+
+    /// Pause/resume a stream voice, keeping its position.
+    pub fn set_paused(&self, id: VoiceId, paused: bool) {
+        self.mixer.lock().unwrap().set_paused(id, paused);
     }
 
     pub fn stop(&self, id: VoiceId) {

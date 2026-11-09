@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { Check } from "$lib/icons";
+  import { Check, Eye, EyeOff } from "$lib/icons";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { invoke } from "@tauri-apps/api/core";
+  import { onMount } from "svelte";
   import { THEMES } from "$lib/themes";
 
   export let theme: string;
@@ -11,6 +14,9 @@
   export let onRemoveMic: () => void = () => {};
   export let companion = true;
   export let onCompanion: (v: boolean) => void = () => {};
+  export let lastfmKey = "";
+  export let lastfmUser = "";
+  export let onLastfm: (key: string, user: string) => void = () => {};
   export let denoise = false;
   export let onDenoise: (v: boolean) => void = () => {};
 
@@ -23,6 +29,32 @@
   };
 
   let cleared = "";
+  // credentials start hidden; the eye reveals them for a moment of checking
+  let showKey = false;
+  let showUser = false;
+  let secretState = "";
+
+  // the key is a credential: it lives in the backend's private store, not in prefs
+  onMount(async () => {
+    try {
+      const key = (await invoke<string | null>("secret_get", { name: "lastfm.key" })) ?? "";
+      const user = (await invoke<string | null>("secret_get", { name: "lastfm.user" })) ?? "";
+      if (key || user) onLastfm(key, user || lastfmUser);
+      secretState = key ? "stored" : "";
+    } catch {
+      /* no backend (browser preview) */
+    }
+  });
+
+  async function saveSecret(key: string, user: string) {
+    try {
+      await invoke("secret_set", { name: "lastfm.key", value: key });
+      await invoke("secret_set", { name: "lastfm.user", value: user });
+      secretState = key ? "stored" : "";
+    } catch {
+      /* ignore */
+    }
+  }
 
   function clearCache() {
     onClearCache();
@@ -34,6 +66,66 @@
 </script>
 
 <div class="settings">
+  <section>
+    <h2>Online</h2>
+    <p class="muted">
+      Charts and search work without an account. A Last.fm key adds your loved tracks and tag
+      stations — create one at
+      <button class="inline" onclick={() => openUrl("https://www.last.fm/api/account/create")}
+        >last.fm/api</button
+      >, then paste it here. Only the <em>API key</em> is needed; ignore the shared secret.
+    </p>
+    <p class="muted small">
+      Stored locally, obfuscated, in Kakiri's own data folder — <em>not</em> in your settings
+      file and not synced. It is not protected by the system keyring yet, so treat it like any
+      other secret on this machine.
+    </p>
+    <div class="fields">
+        <label>
+          <span>Last.fm API key</span>
+          <div class="secret">
+            <input
+              type={showKey ? "text" : "password"}
+              placeholder="paste your 32-character API key"
+              autocomplete="off"
+              spellcheck="false"
+              value={lastfmKey}
+              oninput={(e) => { const v = e.currentTarget.value; onLastfm(v, lastfmUser); void saveSecret(v, lastfmUser); }}
+            />
+            <button
+              class="reveal"
+              onclick={() => (showKey = !showKey)}
+              title={showKey ? "Hide API key" : "Show API key"}
+              aria-label={showKey ? "Hide API key" : "Show API key"}
+            >
+              {#if showKey}<EyeOff size={13} />{:else}<Eye size={13} />{/if}
+            </button>
+          </div>
+        </label>
+        <label>
+          <span>Last.fm username</span>
+          <div class="secret">
+            <input
+              type={showUser ? "text" : "password"}
+              placeholder="your profile name, for loved tracks"
+              autocomplete="off"
+              spellcheck="false"
+              value={lastfmUser}
+              oninput={(e) => { const v = e.currentTarget.value; onLastfm(lastfmKey, v); void saveSecret(lastfmKey, v); }}
+            />
+            <button
+              class="reveal"
+              onclick={() => (showUser = !showUser)}
+              title={showUser ? "Hide username" : "Show username"}
+              aria-label={showUser ? "Hide username" : "Show username"}
+            >
+              {#if showUser}<EyeOff size={13} />{:else}<Eye size={13} />{/if}
+            </button>
+          </div>
+        </label>
+    </div>
+  </section>
+
   <section>
     <h2>Appearance</h2>
     <p class="muted">Theme</p>
@@ -136,6 +228,56 @@
 </div>
 
 <style>
+  .fields {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 420px;
+  }
+  .fields label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11.5px;
+    color: var(--text-3);
+  }
+  .fields input {
+    background: var(--panel-2);
+    border: 0;
+    border-radius: 7px;
+    color: var(--text);
+    font-size: 12.5px;
+    padding: 7px 10px;
+    outline: none;
+  }
+  .fields input:focus { box-shadow: inset 0 0 0 1px var(--accent-dim); }
+  .secret { position: relative; display: flex; align-items: center; }
+  .secret input { flex: 1 1 auto; padding-right: 32px; }
+  .secret input::placeholder { letter-spacing: 0; }
+  .reveal {
+    position: absolute;
+    right: 4px;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--text-3);
+    cursor: pointer;
+  }
+  .reveal:hover { background: var(--panel-3); color: var(--text); }
+  .inline {
+    border: 0;
+    background: none;
+    color: var(--accent, #8b7bff);
+    font: inherit;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+
   .settings {
     flex: 1;
     overflow-y: auto;
@@ -210,5 +352,6 @@
   .toggle.on .knob { transform: translateX(14px); }
   .toggle:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 4px; border-radius: 6px; }
   .ok { color: var(--ok); font-size: 12px; }
+  .muted.small { font-size: 11px; line-height: 1.5; opacity: 0.9; }
   .muted { color: var(--muted); font-size: 12px; line-height: 1.5; }
 </style>

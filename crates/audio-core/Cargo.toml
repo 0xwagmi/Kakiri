@@ -6,6 +6,9 @@ license.workspace = true
 publish = false
 
 [dependencies]
+# range-request reader for playing a link without downloading it first;
+# rustls so the Windows build needs no C toolchain
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 nnnoiseless = "0.5"
 anyhow = "1"
 log = "0.4"

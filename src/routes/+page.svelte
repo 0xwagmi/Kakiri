@@ -10,6 +10,7 @@
   import Select from "$lib/Select.svelte";
   import Settings from "$lib/Settings.svelte";
   import Timeline from "$lib/Timeline.svelte";
+  import Online from "$lib/Online.svelte";
   import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog, Volume2, Download } from "$lib/icons";
 
   type Sound = {
@@ -66,6 +67,10 @@
   let retrigger = "layer";
   let companion = true;
   let denoise = false;
+  // Online mode's personal layer (Last.fm); empty = key-less mode
+  let lastfmKey = "";
+  let lastfmUser = "";
+  let lastfmTag = "";
   let theme = "default";
 
   const retriggerOpts = [
@@ -76,7 +81,7 @@
   let loop = false;
   let masterGain = 0.85;
   let search = "";
-  let view: "library" | "pads" | "timeline" | "settings" = "library";
+  let view: "library" | "online" | "pads" | "timeline" | "settings" = "library";
   let voices: Voice[] = [];
   let scrub: { id: number; pos: number } | null = null;
   let gainEdit: Record<number, number> = {};
@@ -107,6 +112,7 @@
       JSON.stringify({
           target, monitorOn, monitorTarget, loop, masterGain,
           micMix, micSource, micGain, retrigger, theme, companion, denoise,
+          lastfmUser, lastfmTag,
         }),
     );
   }
@@ -516,6 +522,14 @@
         theme = p.theme ?? theme;
         companion = p.companion ?? companion;
         denoise = p.denoise ?? denoise;
+        lastfmUser = p.lastfmUser ?? lastfmUser;
+        lastfmTag = p.lastfmTag ?? lastfmTag;
+        // The key used to live here in plain text. Move it to the backend's secret
+        // store once, then scrub it from preferences.
+        if (typeof p.lastfmKey === "string" && p.lastfmKey) {
+          invoke("secret_set", { name: "lastfm.key", value: p.lastfmKey }).catch(() => {});
+          savePrefs();
+        }
       } catch {
         /* ignore */
       }
@@ -628,6 +642,9 @@
     <div class="views">
       <button class="ghost" class:on={view === "library"} onclick={() => (view = "library")}
         >Library</button
+      >
+      <button class="ghost" class:on={view === "online"} onclick={() => (view = "online")}
+        >Online</button
       >
       <button class="ghost" class:on={view === "pads"} onclick={() => (view = "pads")}>Pads</button>
       <button class="ghost" class:on={view === "timeline"} onclick={() => (view = "timeline")}
@@ -837,6 +854,8 @@
       {/if}
     </section>
   </div>
+  {:else if view === "online"}
+    <Online onSettings={() => (view = "settings")} onChanged={() => void refreshLibrary()} />
   {:else if view === "pads"}
     <Pads sounds={allLibSounds} play={playPath} />
   {:else if view === "timeline"}
@@ -853,6 +872,13 @@
       {companion}
       onCompanion={(v) => {
         companion = v;
+        savePrefs();
+      }}
+      {lastfmKey}
+      {lastfmUser}
+      onLastfm={(k, u) => {
+        lastfmKey = k;
+        lastfmUser = u;
         savePrefs();
       }}
       {denoise}

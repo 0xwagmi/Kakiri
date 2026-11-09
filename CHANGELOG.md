@@ -4,6 +4,65 @@ All notable changes to Kakiri are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6]
+
+### Added
+
+- **Online mode**, a fourth view next to Library/Pads/Timeline. Two panes: playlists
+  and stations on the left, tracks on the right.
+  - **Trending and search** work with no account, from a key-less catalogue that
+    also supplies artwork and track length.
+  - **Last.fm** as the personal layer: your loved tracks and tag stations
+    (`synthwave`, `lofi`, `phonk`…). Needs your own API key; the shared secret is
+    not used and should stay private.
+  - **Saved** playlist, read from the library's `Online` folder rather than
+    remembered by the UI.
+- **Play a link without saving it**, from Import: resolves the stream and plays it,
+  useful for a one-off.
+- **Track cache**: everything streamed is kept on disk, so replays start instantly
+  and keep working offline. Coverage is tracked per 64 KiB block (the container
+  index sits at the end of the file, so "enough bytes" is not "complete"). Capped
+  at 100 MB per track and 1.5 GB total, evicted least-recently-used.
+- **Background prefetch** keeps filling the cache while a track plays *or is
+  paused*, so a short song finishes caching even if you stop.
+- **Save** writes the track into `Music/Kakiri/Online` as a real library file, with
+  a small metadata sidecar (artist, title, cover) beside it. Saving a cached track
+  is a local copy, not a second download, and the button shows the cache filling
+  with real KB.
+- **Delete saves** with selection and a confirmation dialog — one row or many at
+  once — then both the Saved list and the Library rescan.
+- **Player bar**: pause/resume that keeps the position, click-to-seek on the
+  progress line, shuffle, repeat, auto-advance through the queue, and a
+  **Recently played** list.
+- **Settings → Online** for the Last.fm key and username, hidden by default with an
+  eye toggle. The key is kept out of `sb.prefs` and stored in Kakiri's own data
+  folder, obfuscated, in a file only your user can read. **Known limitation:** with
+  a fixed salt in the source this is obfuscation, not encryption — anyone who can
+  read that file as you can decode it. Moving it to the system keyring is planned.
+
+### Changed
+
+- Online playback is **exclusive**: clicking several rows quickly leaves one voice,
+  and the latest click wins instead of every resolve starting its own stream.
+- **First-play latency roughly halved**: one yt-dlp launch instead of two
+  (search and resolve together, ~10 s → ~5.5 s), and the HTTP reader starts with a
+  32 KB window instead of pulling 512 KB to read a 16-byte header (probe 2.7 s →
+  0.44 s).
+- Saved rows show the catalogue's artist/title and cover instead of a guess from
+  the file name.
+
+### Fixed
+
+- Clicking a track played the **previously selected** one (`current` was read one
+  flush before the assignment that changed it).
+- Deleting a save left its "saved" mark behind, so the track could not be
+  downloaded again.
+- Saved artist and title were **swapped** for files named `Title - Artist`.
+- Recently played could point at a deleted file and refuse to play; it now
+  remembers the track, and falls back to streaming if a local file vanished.
+- Last.fm credentials were saved but not restored, so the fields looked empty after
+  a restart and the first keystroke overwrote the key.
+
 ## [0.1.5]
 
 ### Added

@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "audio-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -297,6 +297,7 @@ dependencies = [
  "log",
  "nnnoiseless",
  "pipewire",
+ "reqwest",
  "rtrb",
  "serde",
  "serde_json",
@@ -4307,9 +4308,10 @@ dependencies = [
 
 [[package]]
 name = "soundboard"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "audio-core",
+ "base64 0.22.1",
  "log",
  "reqwest",
  "serde",

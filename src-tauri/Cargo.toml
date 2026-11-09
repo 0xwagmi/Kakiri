@@ -1,6 +1,6 @@
 [package]
 name = "soundboard"
-version = "0.1.5"
+version = "0.1.6"
 description = "Kakiri Soundboard — play audio through a virtual mic in Discord"
 authors = ["0xwagmi"]
 edition = "2024"
@@ -28,5 +28,6 @@ tauri-plugin-log = "2"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
 audio-core = { path = "../crates/audio-core" }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }

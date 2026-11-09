@@ -14,6 +14,8 @@ use audio_core::engine::Engine;
 use audio_core::input::AudioInput;
 use audio_core::library::Folder;
 pub mod download;
+pub mod online;
+pub mod secrets;
 use audio_core::mixer::{Retrigger, Route, VoiceInfo};
 use audio_core::output::AudioOutput;
 use audio_core::timeline::{Clip, TimelineStatus};
@@ -393,6 +395,947 @@ async fn play_sound(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// What `play_link` reports back: the voice it started, the title, and how long
+/// resolving + buffering took (so the UI can be honest about "loading").
+#[derive(serde::Serialize)]
+struct LinkVoice {
+    id: u64,
+    title: String,
+    buffered_ms: u64,
+}
+
+/// Resolutions are valid for hours, so an immediate replay (or a queue advancing
+/// to a track twice) should not pay yt-dlp's ~4 s extraction again.
+static LINK_CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, (String, String, std::time::Instant)>>> =
+    std::sync::Mutex::new(None);
+
+/// Resolve a page URL to a direct audio stream plus a title, without downloading.
+fn resolve_link(url: &str) -> Result<(String, String), String> {
+    let (bin, _version) = crate::download::ytdlp().ok_or_else(|| {
+        "yt-dlp is missing — open Import once to let Kakiri fetch it".to_string()
+    })?;
+    let out = std::process::Command::new(bin)
+        .args([
+            "-f",
+            // symphonia decodes AAC/mp4 out of the box; opus/webm it does not
+            "bestaudio[ext=m4a]/bestaudio",
+            "--no-warnings",
+            "--no-playlist",
+            "--print",
+            "TITLE:%(title)s",
+            "-g",
+            url,
+        ])
+        .output()
+        .map_err(|e| format!("could not run yt-dlp: {e}"))?;
+    if !out.status.success() {
+        let raw = String::from_utf8_lossy(&out.stderr);
+        return Err(crate::download::friendly_ytdlp_error(&raw));
+    }
+    parse_resolve_output(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// `yt-dlp --print "TITLE:%(title)s" -g` writes a prefixed title line and then the
+/// stream URL. The prefix matters: a title can be empty, contain newlines, or even
+/// *be* a URL, so nothing about it can be recognised by shape.
+pub(crate) fn parse_resolve_output(stdout: &str) -> Result<(String, String), String> {
+    let direct = stdout
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| l.starts_with("http"))
+        .ok_or_else(|| "yt-dlp returned no stream URL".to_string())?
+        .to_string();
+    let title = stdout
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("TITLE:"))
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .unwrap_or("link")
+        .to_string();
+    Ok((direct, title))
+}
+
+/// Where streamed tracks are cached. A track that has been streamed through once
+/// is marked complete and replayed from disk, so repeats cost no bandwidth.
+fn track_cache_path(app: &tauri::AppHandle, key: &str) -> Option<std::path::PathBuf> {
+    use tauri::Manager;
+    let dir = app.path().app_cache_dir().ok()?.join("tracks");
+    let _ = std::fs::create_dir_all(&dir);
+    // stable, filesystem-safe name; key may be "online:Artist - Title"
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in key.as_bytes() {
+        hash ^= *b as u64;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    Some(dir.join(format!("{hash:016x}.m4a")))
+}
+
+/// Keep the track cache under `limit` bytes, dropping the least recently used.
+fn trim_track_cache(app: &tauri::AppHandle, limit: u64) {
+    use tauri::Manager;
+    let Ok(dir) = app.path().app_cache_dir().map(|d| d.join("tracks")) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    let mut files: Vec<(std::time::SystemTime, u64, std::path::PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            if !meta.is_file() || e.file_name().to_string_lossy().ends_with(".done") {
+                return None;
+            }
+            Some((meta.modified().ok()?, meta.len(), e.path()))
+        })
+        .collect();
+    let total: u64 = files.iter().map(|(_, len, _)| len).sum();
+    if total <= limit {
+        return;
+    }
+    files.sort_by_key(|(t, _, _)| *t);
+    let mut over = total - limit;
+    for (_, len, path) in files {
+        if over == 0 {
+            break;
+        }
+        let _ = std::fs::remove_file(audio_core::http::done_marker(&path));
+        let _ = std::fs::remove_file(&path);
+        over = over.saturating_sub(len);
+    }
+}
+
+fn link_cache_get(key: &str) -> Option<(String, String)> {
+    let guard = LINK_CACHE.lock().unwrap();
+    guard.as_ref().and_then(|m| {
+        m.get(key)
+            .filter(|(_, _, at)| at.elapsed() < std::time::Duration::from_secs(3 * 3600))
+            .map(|(t, d, _)| (t.clone(), d.clone()))
+    })
+}
+
+fn link_cache_put(key: &str, (title, url): (String, String)) {
+    let mut guard = LINK_CACHE.lock().unwrap();
+    let map = guard.get_or_insert_with(Default::default);
+    if map.len() > 64 {
+        map.clear();
+    }
+    map.insert(key.to_string(), (title, url, std::time::Instant::now()));
+}
+
+/// Play a link straight from the network: nothing is downloaded, nothing is added
+/// to the library. The voice behaves like any other — stop it, seek it, mix it.
+#[tauri::command]
+async fn play_link(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    url: String,
+    gain: Option<f32>,
+    looped: Option<bool>,
+    route: Option<String>,
+) -> Result<LinkVoice, String> {
+    let engine = state.engine.clone();
+    let gain = gain.unwrap_or(0.85);
+    let looped = looped.unwrap_or(false);
+    // "both": the call hears it *and* you do, which is what a music player does
+    let route = Route::parse(route.as_deref().unwrap_or("both"));
+
+    tauri::async_runtime::spawn_blocking(move || {
+        // cache hit → reuse the resolved URL and title
+        let cached = {
+            let guard = LINK_CACHE.lock().unwrap();
+            guard.as_ref().and_then(|m| {
+                m.get(&url)
+                    .filter(|(_, _, at)| at.elapsed() < std::time::Duration::from_secs(3 * 3600))
+                    .map(|(d, t, _)| (d.clone(), t.clone()))
+            })
+        };
+        let (direct, title) = match cached {
+            Some(v) => v,
+            None => {
+                let v = resolve_link(&url)?;
+                let mut guard = LINK_CACHE.lock().unwrap();
+                let map = guard.get_or_insert_with(Default::default);
+                if map.len() > 32 {
+                    map.clear();
+                }
+                map.insert(url.clone(), (v.0.clone(), v.1.clone(), std::time::Instant::now()));
+                v
+            }
+        };
+
+        let cache = track_cache_path(&app, &format!("link:{url}"));
+        let (id, took) = engine
+            .play_url_stream(
+                format!("link:{url}"),
+                title.clone(),
+                direct,
+                gain,
+                looped,
+                route,
+                cache,
+            )
+            .map_err(|e| format!("could not play that link: {e}"))?;
+        Ok(LinkVoice {
+            id,
+            title,
+            buffered_ms: took.as_millis() as u64,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Normalise text for matching: lowercase, letters and digits only.
+fn norm(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Words that appear in upload titles without saying anything about the song.
+const NOISE_WORDS: &[&str] = &[
+    "official", "video", "audio", "lyric", "lyrics", "hd", "hq", "mv", "feat", "ft",
+    "remastered", "visualizer", "explicit", "clean",
+];
+
+/// Words that mean "this is not the track the catalogue meant".
+const JUNK_WORDS: &[&str] = &[
+    "8d", "nightcore", "slowed", "reverb", "bassboost", "sped", "speedup", "tiktok",
+    "cover", "karaoke", "instrumental", "loop", "hours", "hour", "extended",
+];
+
+fn tokens(s: &str) -> Vec<String> {
+    norm(s)
+        .split(' ')
+        .filter(|t| t.len() > 1 && !NOISE_WORDS.contains(t))
+        .map(str::to_string)
+        .collect()
+}
+
+/// How much of `needle`'s words appear in `haystack`.
+fn token_hit(needle: &str, haystack: &str) -> f32 {
+    let want = tokens(needle);
+    if want.is_empty() {
+        return 0.0;
+    }
+    let have = tokens(haystack);
+    let hits = want.iter().filter(|t| have.iter().any(|h| h.contains(*t))).count();
+    hits as f32 / want.len() as f32
+}
+
+/// How much of the candidate's title is accounted for by the query. Without this,
+/// "One More Time" and "One More Time (8D Audio 10 hours)" score identically.
+fn precision(artist: &str, title: &str, cand_title: &str) -> f32 {
+    let have = tokens(cand_title);
+    if have.is_empty() {
+        return 0.0;
+    }
+    let want: Vec<String> = tokens(title).into_iter().chain(tokens(artist)).collect();
+    let explained = have.iter().filter(|h| want.iter().any(|w| h.contains(w))).count();
+    explained as f32 / have.len() as f32
+}
+
+fn junk_penalty(cand_title: &str) -> f32 {
+    let have = tokens(cand_title);
+    let junk = have.iter().filter(|h| JUNK_WORDS.contains(&h.as_str())).count();
+    (junk as f32 * 0.3).min(0.6)
+}
+
+/// Pick the search result that is actually this song.
+///
+/// A naive `ytsearch1` returns "song (nightcore 8D remix) [10 hours]" often
+/// enough to be embarrassing, so each candidate is scored on three things: does
+/// it contain the song's words, does it contain the artist's, and is its title
+/// *only* those words. Length from the catalogue then breaks remaining ties.
+/// `None` means nothing was close enough — better silence than the wrong track.
+pub(crate) fn pick_match(
+    artist: &str,
+    title: &str,
+    want_secs: u32,
+    cands: &[(String, String, u32)],
+) -> Option<String> {
+    let mut best: Option<(f32, &str)> = None;
+    for (id, cand_title, cand_secs) in cands {
+        let mut score = 0.45 * token_hit(title, cand_title)
+            + 0.25 * token_hit(artist, cand_title)
+            + 0.30 * precision(artist, title, cand_title);
+        score -= junk_penalty(cand_title);
+        if want_secs > 0 && *cand_secs > 0 {
+            let diff = cand_secs.abs_diff(want_secs) as f32;
+            score -= (diff / 30.0).min(1.0) * 0.35;
+        }
+        if best.map(|(b, _)| score > b).unwrap_or(true) {
+            best = Some((score, id));
+        }
+    }
+    best.filter(|(score, _)| *score >= 0.45).map(|(_, id)| id.to_string())
+}
+
+/// One yt-dlp call that both searches and resolves.
+///
+/// `-g` prints a stream URL per entry, and `--print` emits lines before each one,
+/// so a single process answers "which candidate is the song" *and* "what do I
+/// stream" — halving the wall time, since each launch pays YouTube extraction.
+///
+/// Observed shape:
+///
+/// ```text
+/// DUR:257
+/// Kavinsky - Nightcall (Drive Original Movie Soundtrack) (Official Audio)
+/// https://rr3---sn-....googlevideo.com/videoplayback?...
+/// ```
+#[derive(Debug, Clone)]
+pub(crate) struct Candidate {
+    pub url: String,
+    /// YouTube video id — what "Save" needs to re-fetch the track as a file
+    pub id: String,
+    pub title: String,
+    pub secs: u32,
+}
+
+pub(crate) fn parse_candidates(stdout: &str) -> Vec<Candidate> {
+    let mut out = Vec::new();
+    let mut title = String::new();
+    let mut id = String::new();
+    let mut dur = 0u32;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if let Some(d) = line.strip_prefix("DUR:") {
+            dur = d.trim().parse().unwrap_or(0);
+        } else if let Some(v) = line.strip_prefix("ID:") {
+            id = v.trim().to_string();
+        } else if line.starts_with("http") {
+            out.push(Candidate {
+                url: line.to_string(),
+                id: std::mem::take(&mut id),
+                title: std::mem::take(&mut title),
+                secs: dur,
+            });
+            dur = 0;
+        } else if !line.is_empty() {
+            title = line.to_string();
+        }
+    }
+    out
+}
+
+/// The scoring view of a candidate: (what to play, its title, its length).
+fn scored(cands: &[Candidate]) -> Vec<(String, String, u32)> {
+    cands
+        .iter()
+        .map(|c| (c.url.clone(), c.title.clone(), c.secs))
+        .collect()
+}
+
+/// Resolve a catalogue row to a playable stream URL.
+///
+/// `-g` resolves a stream URL for *every* entry of a search, and each extraction
+/// costs ~2 s on top of yt-dlp's 1.2 s startup. Measured on this machine:
+///
+/// ```text
+/// ytsearch1 + -g   5.0 s      ytsearch3 + -g   7.6 s      ytsearch5 + -g  11.5 s
+/// flat search      2.7 s      + separate resolve    ~7.9 s total
+/// ```
+///
+/// So the common case asks for exactly one candidate — and because that candidate
+/// is then checked against the catalogue's length, a wrong pick is caught rather
+/// than played: only a rejected match pays for the wider search.
+fn resolve_online(
+    artist: &str,
+    title: &str,
+    want_secs: u32,
+) -> Result<(String, String), String> {
+    let first = search_and_resolve(artist, title, 1)?;
+    if let Some(url) = pick_match(artist, title, want_secs, &scored(&first)) {
+        let id = first.iter().find(|c| c.url == url).map(|c| c.id.clone()).unwrap_or_default();
+        return Ok((url, id));
+    }
+    // the top hit wasn't the song: look at a few and score them all
+    let wider = search_and_resolve(artist, title, 3)?;
+    let url = pick_match(artist, title, want_secs, &scored(&wider))
+        .ok_or_else(|| format!("no close match on YouTube for “{artist} — {title}”"))?;
+    let id = wider.iter().find(|c| c.url == url).map(|c| c.id.clone()).unwrap_or_default();
+    Ok((url, id))
+}
+
+/// One yt-dlp launch: search `n` candidates and print each with its length and
+/// stream URL. The prints come out interleaved per entry (see `parse_candidates`).
+fn search_and_resolve(
+    artist: &str,
+    title: &str,
+    n: u32,
+) -> Result<Vec<Candidate>, String> {
+    let (bin, _) = crate::download::ytdlp().ok_or_else(|| {
+        "yt-dlp is missing — open Import once to let Kakiri fetch it".to_string()
+    })?;
+    let query = format!("ytsearch{n}:{artist} {title}");
+    let out = std::process::Command::new(bin)
+        .args([
+            "-f",
+            "bestaudio[ext=m4a]/bestaudio",
+            "--no-warnings",
+            "--no-playlist",
+            "--print",
+            "DUR:%(duration)s",
+            "--print",
+            "ID:%(id)s",
+            "--print",
+            "%(title)s",
+            "-g",
+            &query,
+        ])
+        .output()
+        .map_err(|e| format!("could not run yt-dlp: {e}"))?;
+    if !out.status.success() {
+        return Err(crate::download::friendly_ytdlp_error(&String::from_utf8_lossy(
+            &out.stderr,
+        )));
+    }
+    Ok(parse_candidates(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// Play one row from the Online list.
+#[tauri::command]
+async fn play_online(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    artist: String,
+    title: String,
+    duration: Option<u32>,
+    gain: Option<f32>,
+) -> Result<LinkVoice, String> {
+    let engine = state.engine.clone();
+    let gain = gain.unwrap_or(0.85);
+    let cache = track_cache_path(&app, &format!("online:{artist} - {title}"));
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let key = format!("online:{artist} - {title}");
+        if let Some((_t, url)) = link_cache_get(&key) {
+            let (id, took) = engine
+                .play_url_stream(
+                    key,
+                    format!("{artist} — {title}"),
+                    url,
+                    gain,
+                    false,
+                    Route::Both,
+                    cache.clone(),
+                )
+                .map_err(|e| format!("could not play that track: {e}"))?;
+            return Ok(LinkVoice { id, title: format!("{artist} — {title}"), buffered_ms: took.as_millis() as u64 });
+        }
+        let (url, video_id) = resolve_online(&artist, &title, duration.unwrap_or(0))?;
+        link_cache_put(&key, (video_id, url.clone()));
+        let (id, took) = engine
+            .play_url_stream(
+                key,
+                format!("{artist} — {title}"),
+                url,
+                gain,
+                false,
+                Route::Both,
+                cache,
+            )
+            .map_err(|e| format!("could not play that track: {e}"))?;
+        trim_track_cache(&handle, 1_500 * 1024 * 1024);
+        Ok(LinkVoice { id, title: format!("{artist} — {title}"), buffered_ms: took.as_millis() as u64 })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Resolve a catalogue row to a video page URL, for "Save" — the import pipeline
+/// then downloads it once into the library, after which it plays from disk and
+/// can be dropped into the timeline or bound to a pad.
+#[tauri::command]
+async fn online_video_url(
+    artist: String,
+    title: String,
+    duration: Option<u32>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let key = format!("online:{artist} - {title}");
+        if let Some((id, _url)) = link_cache_get(&key) {
+            if !id.is_empty() {
+                return Ok(format!("https://www.youtube.com/watch?v={id}"));
+            }
+        }
+        let (url, id) = resolve_online(&artist, &title, duration.unwrap_or(0))?;
+        link_cache_put(&key, (id.clone(), url));
+        if id.is_empty() {
+            return Err("could not identify that video".to_string());
+        }
+        Ok(format!("https://www.youtube.com/watch?v={id}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Saved tracks keep their identity beside the audio in a tiny JSON file.
+///
+/// The file name cannot be trusted: the import pipeline writes `Title - Artist`
+/// while the UI shows `Artist — Title`, so parsing it back swapped the two. The
+/// sidecar holds the truth (plus the cover, so the library has artwork without
+/// re-muxing the stream).
+fn meta_path(audio: &std::path::Path) -> std::path::PathBuf {
+    let mut p = audio.as_os_str().to_owned();
+    p.push(".meta.json");
+    std::path::PathBuf::from(p)
+}
+
+#[derive(serde::Deserialize)]
+struct SavedMeta {
+    artist: String,
+    title: String,
+    artwork: Option<String>,
+}
+
+fn write_meta(audio: &std::path::Path, artist: &str, title: &str, artwork: Option<&str>) {
+    let meta = serde_json::json!({
+        "artist": artist,
+        "title": title,
+        "artwork": artwork.filter(|u| u.starts_with("http")),
+    });
+    let _ = std::fs::write(meta_path(audio), meta.to_string());
+}
+
+/// Names that survive every filesystem we ship on.
+fn safe_name(s: &str) -> String {
+    s.chars()
+        .map(|c| if "\\/:*?\"<>|".contains(c) { '_' } else { c })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Put an already-cached track into the library: no network, just a copy.
+fn copy_cached(cache: &std::path::Path, artist: &str, title: &str) -> Result<audio_core::import::Imported, String> {
+    let base = std::path::PathBuf::from(import_default_folder()?);
+    let dest_dir = base.join("Online");
+    std::fs::create_dir_all(&dest_dir)
+        .map_err(|e| format!("cannot create {}: {e}", dest_dir.display()))?;
+    let name = format!("{} - {}", artist, title);
+    let dest = dest_dir.join(format!("{}.m4a", safe_name(&name)));
+    std::fs::copy(cache, &dest).map_err(|e| format!("could not copy the cached track: {e}"))?;
+    let duration_secs = audio_core::tags::duration_secs(&dest).unwrap_or(0.0);
+    Ok(audio_core::import::Imported {
+        path: dest.display().to_string(),
+        name,
+        duration_secs,
+        converted: false,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct SavedTrack {
+    path: String,
+    name: String,
+    artist: String,
+    title: String,
+    duration: u32,
+    artwork: Option<String>,
+    /// false for files saved before the sidecar existed: artist/title came from
+    /// the name, whose order cannot be trusted
+    has_meta: bool,
+}
+
+/// The Saved playlist, read from disk rather than remembered by the UI.
+///
+/// Local storage drifted from reality the moment a file was deleted or added by
+/// other means, which left rows marked "saved" with nothing behind them. The
+/// folder is the truth: `Artist - Title.m4a` is the whole schema.
+#[tauri::command]
+async fn online_saved() -> Result<Vec<SavedTrack>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let dir = std::path::PathBuf::from(import_default_folder()?).join("Online");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Ok(Vec::new()); // no saves yet
+        };
+        let mut out: Vec<SavedTrack> = entries
+            .flatten()
+            .filter_map(|e| {
+                let path = e.path();
+                let file_name = path.file_name()?.to_str()?.to_string();
+                // yt-dlp leaves `.kakiri-….m4a` and `*.part` files mid-download
+                if file_name.starts_with('.') || file_name.ends_with(".part") {
+                    return None;
+                }
+                let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+                if !matches!(ext.as_str(), "m4a" | "mp3" | "opus" | "wav" | "flac" | "aac" | "ogg")
+                {
+                    return None;
+                }
+                let name = path.file_stem()?.to_str()?.to_string();
+                let meta: Option<SavedMeta> = std::fs::read_to_string(meta_path(&path))
+                    .ok()
+                    .and_then(|raw| serde_json::from_str(&raw).ok());
+                let has_meta = meta.is_some();
+                // fallback for files saved before the sidecar existed: the name is all we
+                // have, and its order is not trustworthy
+                let (artist, title, artwork) = match meta {
+                    Some(m) => (m.artist, m.title, m.artwork.filter(|u| u.starts_with("http"))),
+                    None => match name.split_once(" - ") {
+                        Some((a, t)) => (a.trim().to_string(), t.trim().to_string(), None),
+                        None => (String::new(), name.clone(), None),
+                    },
+                };
+                let duration = audio_core::tags::duration_secs(&path).unwrap_or(0.0);
+                Some(SavedTrack {
+                    path: path.display().to_string(),
+                    name,
+                    artist,
+                    title,
+                    duration: duration.round() as u32,
+                    artwork,
+                    has_meta,
+                })
+            })
+            .collect();
+        // newest first is impossible without a stored time; name order is stable
+        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Look a saved track's cover up by name, for files saved before we started
+/// writing the cover beside them. One catalogue search, no audio.
+#[derive(serde::Serialize)]
+struct Lookup {
+    artist: String,
+    title: String,
+    artwork: Option<String>,
+}
+
+/// Best catalogue guess for a saved file: repairs saves that predate the metadata
+/// sidecar (their artist/title came from a file name that puts the title first)
+/// and gives them a cover.
+#[tauri::command]
+async fn online_lookup(artist: String, title: String) -> Result<Option<Lookup>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let q = format!("{artist} {title}");
+        Ok(crate::online::search(&q, 1)?.into_iter().next().map(|t| Lookup {
+            artist: t.artist,
+            title: t.title,
+            artwork: t.artwork,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Last.fm credentials live in a private file, not in `sb.prefs`: `localStorage`
+/// is a plaintext key-value store shared with every other setting.
+#[tauri::command]
+fn secret_get(app: tauri::AppHandle, name: String) -> Option<String> {
+    crate::secrets::get(&app, &name)
+}
+
+#[tauri::command]
+fn secret_set(app: tauri::AppHandle, name: String, value: String) -> Result<(), String> {
+    crate::secrets::set(&app, &name, &value)
+}
+
+/// Remove a saved track from the library.
+///
+/// Deliberately narrow: only files inside `~/Music/Kakiri/Online` can be deleted,
+/// so a stale UI entry can never take something else with it. The track cache is
+/// separate and is left alone — it is evicted on its own schedule.
+#[tauri::command]
+fn unsave_online(path: String) -> Result<(), String> {
+    let base = std::path::PathBuf::from(import_default_folder()?).join("Online");
+    remove_saved(&base, &path)
+}
+
+/// Delete `path`, but only if it really sits inside `base` (the Online folder).
+/// Missing files are success: the UI just needs to forget them.
+fn remove_saved(base: &std::path::Path, path: &str) -> Result<(), String> {
+    let base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+    let target = std::path::PathBuf::from(path);
+    let resolved = target.canonicalize().unwrap_or_else(|_| target.clone());
+    if !resolved.starts_with(&base) {
+        return Err(format!(
+            "refusing to delete {} — it is not in the Online library folder",
+            target.display()
+        ));
+    }
+    let _ = std::fs::remove_file(meta_path(&resolved));
+    match std::fs::remove_file(&resolved) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("could not remove {}: {e}", resolved.display())),
+    }
+}
+
+#[derive(serde::Serialize)]
+struct CacheState {
+    /// bytes already on disk
+    cached: u64,
+    /// size of the whole track (0 when nothing is cached yet)
+    total: u64,
+    /// streamed through once → playing and saving are instant
+    complete: bool,
+}
+
+/// How much of this row is cached, for the Save control's fill.
+#[tauri::command]
+fn online_cache_state(app: tauri::AppHandle, artist: String, title: String) -> CacheState {
+    let Some(path) = track_cache_path(&app, &format!("online:{artist} - {title}")) else {
+        return CacheState { cached: 0, total: 0, complete: false };
+    };
+    let (cached, total) = audio_core::http::cache_progress(&path);
+    CacheState {
+        cached,
+        total,
+        complete: audio_core::http::is_complete(&path),
+    }
+}
+
+/// Save an Online row as a real file in the library, next to imported sounds.
+///
+/// This is the "keep it" half of the pair: the track cache makes repeats cheap
+/// until it is evicted, a saved track is a file the user owns — instant to play,
+/// works offline, and can go in the timeline or on a pad like anything else.
+#[tauri::command]
+async fn save_online(
+    app: tauri::AppHandle,
+    artist: String,
+    title: String,
+    duration: Option<u32>,
+    artwork: Option<String>,
+    job: Option<String>,
+) -> Result<audio_core::import::Imported, String> {
+    let job = job.unwrap_or_else(|| format!("save-{artist}-{title}"));
+    let app2 = app.clone();
+    let job2 = job.clone();
+
+    // already streamed through once? then "saving" is a local copy, not a download
+    if let Some(cache) = track_cache_path(&app, &format!("online:{artist} - {title}")) {
+        if audio_core::http::is_complete(&cache) {
+            return tauri::async_runtime::spawn_blocking(move || {
+                let got = copy_cached(&cache, &artist, &title)?;
+                write_meta(std::path::Path::new(&got.path), &artist, &title, artwork.as_deref());
+                Ok(got)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        // the same resolution the player uses, so "Save" saves what you hear
+        let key = format!("online:{artist} - {title}");
+        let watch = match link_cache_get(&key) {
+            Some((id, _url)) if !id.is_empty() => format!("https://www.youtube.com/watch?v={id}"),
+            _ => {
+                let (url, id) = resolve_online(&artist, &title, duration.unwrap_or(0))?;
+                link_cache_put(&key, (id.clone(), url));
+                format!("https://www.youtube.com/watch?v={id}")
+            }
+        };
+        let base = std::path::PathBuf::from(import_default_folder()?);
+        let dest = base.join("Online");
+        std::fs::create_dir_all(&dest).map_err(|e| format!("cannot create {}: {e}", dest.display()))?;
+        let label = format!("{artist} — {title}");
+        let got = crate::download::fetch(&job2, &watch, &dest, None, &mut |pct, stage| {
+            emit_progress(&app2, &job2, pct, &format!("{label}: {stage}"));
+        })?;
+        write_meta(std::path::Path::new(&got.path), &artist, &title, artwork.as_deref());
+        Ok(got)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// --- Online mode: what to play, never the audio itself ---
+
+#[tauri::command]
+async fn online_charts(limit: Option<u32>) -> Result<Vec<crate::online::OnlineTrack>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::online::charts(limit.unwrap_or(30)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn online_search(
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<crate::online::OnlineTrack>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::online::search(&query, limit.unwrap_or(30))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn online_loved(
+    user: String,
+    api_key: String,
+) -> Result<Vec<crate::online::OnlineTrack>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::online::loved(&user, &api_key))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn online_tag(
+    tag: String,
+    api_key: String,
+) -> Result<Vec<crate::online::OnlineTrack>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::online::tag_station(&tag, &api_key))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::{
+        meta_path, parse_candidates, parse_resolve_output, pick_match, remove_saved, scored,
+        write_meta, SavedMeta,
+    };
+
+    #[test]
+    fn pulls_the_last_url_and_the_prefixed_title() {
+        let out = "TITLE:Rick Astley - Never Gonna Give You Up\nhttps://rr1---sn-abc.googlevideo.com/videoplayback?x=1\n";
+        let (url, title) = parse_resolve_output(out).unwrap();
+        assert!(url.starts_with("https://rr1---sn-abc"));
+        assert_eq!(title, "Rick Astley - Never Gonna Give You Up");
+    }
+
+    #[test]
+    fn survives_a_title_that_looks_like_a_url() {
+        let out = "TITLE:https://youtu.be/xyz\n\nhttps://cdn.example/stream.m4a\n";
+        let (url, title) = parse_resolve_output(out).unwrap();
+        assert_eq!(url, "https://cdn.example/stream.m4a");
+        assert_eq!(title, "https://youtu.be/xyz");
+    }
+
+    #[test]
+    fn empty_title_falls_back_to_link() {
+        let out = "TITLE:\nhttps://cdn.example/stream.m4a\n";
+        let (url, title) = parse_resolve_output(out).unwrap();
+        assert_eq!(url, "https://cdn.example/stream.m4a");
+        assert_eq!(title, "link");
+    }
+
+    #[test]
+    fn picks_the_real_song_not_the_remix() {
+        let cands = vec![
+            ("aaa".to_string(), "Daft Punk - One More Time (8D Audio)".to_string(), 320),
+            ("bbb".to_string(), "Daft Punk - One More Time".to_string(), 320),
+            ("ccc".to_string(), "One More Time - Daft Punk (10 hours)".to_string(), 36_000),
+        ];
+        assert_eq!(pick_match("Daft Punk", "One More Time", 320, &cands).unwrap(), "bbb");
+    }
+
+    #[test]
+    fn rejects_ten_hour_loops_and_covers() {
+        let cands = vec![
+            ("hours".to_string(), "Daft Punk - One More Time (10 hours)".to_string(), 36_000),
+            ("karaoke".to_string(), "One More Time (Karaoke Version)".to_string(), 320),
+        ];
+        assert!(pick_match("Daft Punk", "One More Time", 320, &cands).is_none());
+    }
+
+    #[test]
+    fn rejects_a_result_that_is_not_the_song() {
+        let cands = vec![("zzz".to_string(), "Some Cooking Video".to_string(), 600)];
+        assert!(pick_match("Daft Punk", "One More Time", 320, &cands).is_none());
+    }
+
+    #[test]
+    fn duration_breaks_ties_between_duplicates() {
+        // same title twice: the one matching the catalogue length wins
+        let cands = vec![
+            ("short".to_string(), "Kavinsky Nightcall".to_string(), 200),
+            ("real".to_string(), "Kavinsky Nightcall".to_string(), 258),
+        ];
+        assert_eq!(pick_match("Kavinsky", "Nightcall", 258, &cands).unwrap(), "real");
+    }
+
+    #[test]
+    fn parses_urls_with_their_ids_titles_and_durations() {
+        let out = "DUR:257\nID:abc123\nKavinsky - Nightcall (Official Audio)\nhttps://cdn/one\n\
+                   DUR:255\nID:def456\nKavinsky - Nightcall \"Drive\"\nhttps://cdn/two\n";
+        let cands = parse_candidates(out);
+        assert_eq!(cands.len(), 2);
+        assert_eq!(cands[0].url, "https://cdn/one");
+        assert_eq!(cands[0].id, "abc123");
+        assert_eq!(cands[0].secs, 257);
+        assert!(cands[1].title.contains("Drive"));
+    }
+
+    #[test]
+    fn single_call_result_still_matches_the_right_track() {
+        let cands = parse_candidates(
+            "DUR:3600\nID:hours\nKavinsky Nightcall 10 hours\nhttps://cdn/hours\n\
+             DUR:258\nID:real\nKavinsky - Nightcall (Official Audio)\nhttps://cdn/real\n",
+        );
+        assert_eq!(
+            pick_match("Kavinsky", "Nightcall", 258, &scored(&cands)).unwrap(),
+            "https://cdn/real"
+        );
+    }
+
+    #[test]
+    fn saved_metadata_survives_a_round_trip() {
+        let dir = std::env::temp_dir().join("kakiri-meta-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // the import pipeline names files "Title - Artist"; the sidecar must win
+        let audio = dir.join("Some Title - Some Artist.m4a");
+        std::fs::write(&audio, b"x").unwrap();
+        write_meta(&audio, "Some Artist", "Some Title", Some("https://cdn/cover.jpg"));
+
+        let raw = std::fs::read_to_string(meta_path(&audio)).unwrap();
+        let meta: SavedMeta = serde_json::from_str(&raw).unwrap();
+        assert_eq!(meta.artist, "Some Artist");
+        assert_eq!(meta.title, "Some Title");
+        assert_eq!(meta.artwork.as_deref(), Some("https://cdn/cover.jpg"));
+    }
+
+    #[test]
+    fn unsave_refuses_anything_outside_the_online_folder() {
+        let dir = std::env::temp_dir().join("kakiri-unsave-test");
+        let inside = dir.join("Online");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&inside).unwrap();
+        let keep = dir.join("keep.txt");
+        std::fs::write(&keep, b"do not delete me").unwrap();
+        let mine = inside.join("Artist - Title.m4a");
+        std::fs::write(&mine, b"track").unwrap();
+
+        assert!(remove_saved(&inside, &mine.display().to_string()).is_ok());
+        assert!(!mine.exists(), "the saved file should be gone");
+
+        let err = remove_saved(&inside, &keep.display().to_string());
+        assert!(err.is_err(), "must not delete outside the Online folder");
+        assert!(keep.exists(), "that file had to survive");
+
+        // already gone → success, so a stale UI entry can still be dropped
+        assert!(remove_saved(&inside, &mine.display().to_string()).is_ok());
+    }
+
+    #[test]
+    fn missing_url_is_an_error() {
+        assert!(parse_resolve_output("only a title\n").is_err());
+    }
+}
+
+/// Pause/resume a stream voice. Position and buffered audio are kept, so this is
+/// a real pause rather than a stop that loses its place.
+#[tauri::command]
+fn pause_voice(state: tauri::State<'_, AppState>, id: u64, paused: bool) {
+    state.engine.set_paused(id, paused);
 }
 
 #[tauri::command]
@@ -876,6 +1819,21 @@ pub fn run() {
             library_scan,
             artwork,
             play_sound,
+            play_link,
+            play_online,
+            online_video_url,
+            save_online,
+            unsave_online,
+            secret_get,
+            secret_set,
+            online_saved,
+            online_lookup,
+            online_cache_state,
+            online_charts,
+            online_search,
+            online_loved,
+            online_tag,
+            pause_voice,
             stop_voice,
             stop_all,
             set_voice_gain,

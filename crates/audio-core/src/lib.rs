@@ -9,6 +9,7 @@ pub mod decode;
 pub mod denoise;
 pub mod devices;
 pub mod engine;
+pub mod http;
 pub mod import;
 pub mod input;
 pub mod library;

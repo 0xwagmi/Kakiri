@@ -6,6 +6,9 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import {
     X,
+    Play,
+    Square,
+    Loader,
     Upload,
     Link2,
     Download,
@@ -56,8 +59,42 @@
   let clipFrom = "0:00";
   let clipTo = "";
   let extraFolder = ""; // created on demand when the library is still empty
+  // a link that is playing straight off the network (nothing saved)
+  let linkVoice: { id: number; title: string } | null = null;
+  let linkBusy = false;
+  let linkError = "";
 
   const base = (p: string) => p.split(/[\\/]/).pop() ?? p;
+
+  /** Play a link from the network: no download, nothing added to the library. */
+  async function playLink() {
+    const link = url.trim();
+    if (!link || linkBusy) return;
+    linkBusy = true;
+    linkError = "";
+    try {
+      const v = await invoke<{ id: number; title: string; buffered_ms: number }>("play_link", {
+        url: link,
+      });
+      linkVoice = { id: v.id, title: v.title };
+      url = "";
+      probe = null;
+    } catch (e) {
+      linkError = String(e);
+    } finally {
+      linkBusy = false;
+    }
+  }
+
+  async function stopLink() {
+    if (!linkVoice) return;
+    try {
+      await invoke("stop_voice", { id: linkVoice.id });
+    } catch {
+      /* already gone */
+    }
+    linkVoice = null;
+  }
   $: destination = folder || dest || folders[0] || extraFolder;
   $: running = jobs.some((j) => j.state === "running");
 
@@ -332,10 +369,24 @@
             probeError = "";
           }}
         />
+        <button class="ghost play" onclick={playLink} disabled={!url.trim() || linkBusy}>
+          {#if linkBusy}<Loader size={13} /> Buffering{:else}<Play size={13} /> Play{/if}
+        </button>
         <button class="primary" onclick={importUrl} disabled={!url.trim()}>
           <Download size={13} /> Get
         </button>
       </div>
+
+        {#if linkVoice}
+          <div class="nowplaying">
+            <Play size={12} />
+            <span class="nptitle" title={linkVoice.title}>{linkVoice.title}</span>
+            <button class="ghost" onclick={stopLink}><Square size={12} /> Stop</button>
+          </div>
+        {/if}
+        {#if linkError}
+          <p class="warn"><TriangleAlert size={13} /> {linkError}</p>
+        {/if}
 
       {#if probing}
         <p class="hint">Looking the link up…</p>
@@ -707,4 +758,25 @@
     cursor: pointer;
   }
   .ghost:hover { background: var(--panel-2); color: var(--text); }
+  .ghost.play { flex: 0 0 auto; }
+  .ghost:disabled { opacity: 0.5; cursor: default; }
+
+  .nowplaying {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    background: var(--panel-2);
+    color: var(--text-2);
+    font-size: 12px;
+  }
+  .nptitle {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+  }
 </style>

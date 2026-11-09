@@ -145,7 +145,7 @@ fn pump<R: std::io::Read + Send + 'static>(r: R, tx: std::sync::mpsc::Sender<Str
 pub const NEEDS_UPDATE: &str = "@update@";
 pub const NEEDS_COOKIES: &str = "@cookies@";
 
-fn friendly_ytdlp_error(raw: &str) -> String {
+pub(crate) fn friendly_ytdlp_error(raw: &str) -> String {
     let msg = raw.trim();
     let low = msg.to_ascii_lowercase();
     let tagged = |tag: &str, text: &str| format!("{tag}{text}");

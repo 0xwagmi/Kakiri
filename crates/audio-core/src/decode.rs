@@ -8,7 +8,7 @@ use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatReader, SeekMode, SeekTo, TrackType};
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::Time;
 
@@ -89,9 +89,19 @@ pub struct StreamDecoder {
 impl StreamDecoder {
     pub fn open(path: &Path, target: BusFormat) -> Result<Self> {
         let file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        Self::open_source(Box::new(file), &make_hint(path), target)
+    }
+
+    /// Same, but for any source symphonia can read — a file, or an HTTP range
+    /// reader for a link we never download.
+    pub fn open_source(
+        source: Box<dyn MediaSource>,
+        hint: &Hint,
+        target: BusFormat,
+    ) -> Result<Self> {
+        let mss = MediaSourceStream::new(source, Default::default());
         let format = symphonia::default::get_probe()
-            .probe(&make_hint(path), mss, Default::default(), MetadataOptions::default())
+            .probe(hint, mss, Default::default(), MetadataOptions::default())
             .map_err(|e| anyhow!("unsupported/corrupt format: {e}"))?;
 
         let (track_id, src_rate, src_channels, total_frames, decoder) = {
