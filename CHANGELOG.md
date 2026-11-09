@@ -9,11 +9,15 @@ All notable changes to Kakiri are recorded here. The format follows
 ### Added
 
 - **Noise reduction (RNNoise)** for the live mic, in Settings. `nnnoiseless`, the
-  pure-Rust rnnoise port, runs on samples the engine already captures: −10.6 dB
-  of noise on a white-noise test, ~1 % of a core, and one 480-sample frame
-  (10 ms) of added latency. It replaces an Easy Effects chain, which cost an
-  extra process *and* an extra graph hop. Turn Discord's own suppression off
-  afterwards — it would gate the sounds you play.
+  pure-Rust rnnoise port, runs on samples the engine already captures: ~1 % of a
+  core and one 480-sample frame (10 ms) of added latency, replacing an external
+  processor chain that cost a separate process *and* an extra graph hop.
+  A gate closes to **digital silence** between words (hangover ~20 ms) instead of
+  leaving residual hiss, and a wet/dry mix keeps some natural body in the voice.
+  Measured on a fixed white-noise input: −3.3 dB with the gate off, −16.2 dB with
+  it on. Turn Discord's own suppression off afterwards — it would gate the sounds
+  you play. Tuning knobs, for A/B tests without rebuilding: `KAKIRI_WET_DB`,
+  `KAKIRI_VAD`, `KAKIRI_VAD_THRES`, `KAKIRI_RELEASE_MS`.
   A DeepFilterNet engine was measured and dropped: 44 % of a core on a laptop
   against RNNoise's 1 %, for a quality difference Discord's 64 kbps Opus would
   largely erase.
