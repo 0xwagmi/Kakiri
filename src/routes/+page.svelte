@@ -14,6 +14,7 @@
   import Online from "$lib/Online.svelte";
   import Update from "$lib/Update.svelte";
   import MiniPlayer from "$lib/MiniPlayer.svelte";
+  import { readPads, registerHotkeys, padForAccelerator } from "$lib/pads";
   import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog, Volume2, Download } from "$lib/icons";
 
   type Sound = {
@@ -164,6 +165,8 @@
       })
       .catch(() => {});
 
+    // arm the hotkeys now, rather than the first time the Pads tab is opened
+    void registerHotkeys(readPads());
     // hotkeys and `wagmify --pad N` both land here, on every tab
     void listen<string>("hotkey", (e) => firePadByAccelerator(e.payload));
     void listen<number>("pad", (e) => firePad(e.payload));
@@ -389,32 +392,16 @@
     await refreshLibrary();
   }
 
-  /** Pads live in localStorage; the page owns the trigger so a hotkey or a
-      desktop shortcut still works while another tab is showing. */
-  function padAt(i: number): { soundPath: string | null; name: string } | null {
-    try {
-      const pads = JSON.parse(localStorage.getItem("sb.pads") ?? "[]");
-      return Array.isArray(pads) ? (pads[i] ?? null) : null;
-    } catch {
-      return null;
-    }
-  }
-
+  /** Pads are fired from here, not from the grid: a hotkey or a desktop shortcut
+      has to work while another tab is showing. */
   function firePad(i: number) {
-    const pad = padAt(i);
+    const pad = readPads()[i];
     if (pad?.soundPath) void playPath(pad.soundPath, pad.name || "");
   }
 
   function firePadByAccelerator(accel: string) {
-    try {
-      const pads = JSON.parse(localStorage.getItem("sb.pads") ?? "[]");
-      const i = (Array.isArray(pads) ? pads : []).findIndex(
-        (p: { canonical: string | null }) => p.canonical && p.canonical === accel,
-      );
-      if (i >= 0) firePad(i);
-    } catch {
-      /* nothing bound */
-    }
+    const i = padForAccelerator(readPads(), accel);
+    if (i >= 0) firePad(i);
   }
 
   async function play(s: Sound) {

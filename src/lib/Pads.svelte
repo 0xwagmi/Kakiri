@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
-  import Select from "$lib/Select.svelte";
+    import Select from "$lib/Select.svelte";
+  import { readPads, writePads, registerHotkeys, defaultPads, PAD_COUNT, type Pad } from "$lib/pads";
   import { Pencil, Check } from "$lib/icons";
 
   type Sound = {
@@ -11,20 +11,10 @@
     ext: string;
     duration_secs: number | null;
   };
-  type Pad = {
-    id: number;
-    soundPath: string | null;
-    name: string;
-    hotkey: string;
-    canonical: string | null;
-    error: boolean;
-  };
 
   export let sounds: Sound[] = [];
   export let play: (path: string, label: string) => void;
 
-  const LS_PADS = "sb.pads";
-  const PAD_COUNT = 16;
 
   let pads: Pad[] = [];
   let editMode = false;
@@ -35,16 +25,6 @@
     ...sounds.map((s) => ({ value: s.path, label: s.name })),
   ];
 
-  function defaultPads(): Pad[] {
-    return Array.from({ length: PAD_COUNT }, (_, i) => ({
-      id: i,
-      soundPath: null,
-      name: "",
-      hotkey: "",
-      canonical: null,
-      error: false,
-    }));
-  }
 
   function flash(m: string) {
     toast = m;
@@ -59,15 +39,7 @@
   }
 
   async function syncHotkeys() {
-    const res = await invoke<string[]>("set_hotkeys", {
-      accelerators: pads.map((p) => p.hotkey || ""),
-    });
-    pads = pads.map((p, i) => ({
-      ...p,
-      canonical: res[i] || null,
-      error: !!p.hotkey.trim() && !res[i],
-    }));
-    localStorage.setItem(LS_PADS, JSON.stringify(pads));
+    pads = await registerHotkeys(pads);
     const bad = pads.filter((p) => p.error).length;
     if (bad) flash(`${bad} hotkey${bad > 1 ? "s" : ""} not recognized`);
   }
@@ -144,20 +116,9 @@
   }
 
   onMount(() => {
-    void (async () => {
-    const stored = localStorage.getItem(LS_PADS);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length) pads = parsed;
-      } catch {
-        /* ignore */
-      }
-    }
-    if (!pads.length) pads = defaultPads();
-    await syncHotkeys();
-    })();
-    return () => {};
+    pads = readPads();
+    void writePads(pads);
+    void syncHotkeys();
   });
 </script>
 
