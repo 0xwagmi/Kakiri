@@ -558,7 +558,7 @@
     cursor: pointer;
   }
   .tab:hover { color: var(--text); background: var(--panel-2); }
-  .tab.on { color: var(--text); background: color-mix(in srgb, var(--accent) 22%, var(--panel-2)); }
+  .tab.on { color: var(--text); background: rgb(139 123 255 / 0.18); }
 
   .drop {
     display: flex;
@@ -579,7 +579,7 @@
   .drop:hover, .drop.hovering {
     border-color: var(--accent);
     color: var(--text-2);
-    background: color-mix(in srgb, var(--accent) 10%, var(--panel-2));
+    background: rgb(139 123 255 / 0.1);
   }
 
   .row { display: flex; gap: 6px; }
@@ -613,7 +613,7 @@
     margin-top: 8px;
     padding: 7px 9px;
     border-radius: 7px;
-    background: color-mix(in srgb, var(--accent) 10%, var(--panel-2));
+    background: rgb(139 123 255 / 0.1);
   }
   .ftitle { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .fsub { font-size: 10.5px; color: var(--muted); margin-top: 2px; }
@@ -693,7 +693,7 @@
     cursor: pointer;
     text-overflow: ellipsis;
   }
-  .pick select:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+  .pick select:hover { border-color: rgb(139 123 255 / 0.45); }
   .pick select:focus { outline: none; border-color: var(--accent); }
   .pick select option { background: var(--panel-2); color: var(--text-2); }
   .pick .chev {
@@ -708,8 +708,8 @@
 
   .jobs { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
   .jobs li { background: var(--panel-2); border-radius: 7px; padding: 7px 9px; }
-  .jobs li.ok { background: color-mix(in srgb, var(--ok, #3fb950) 12%, var(--panel-2)); }
-  .jobs li.err { background: color-mix(in srgb, var(--danger, #f85149) 12%, var(--panel-2)); }
+  .jobs li.ok { background: rgb(63 185 80 / 0.12); }
+  .jobs li.err { background: rgb(248 81 73 / 0.12); }
   .jtop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .jname { font-size: 11.5px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pct { font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -737,7 +737,7 @@
   }
   .linkish:hover { text-decoration: underline; }
   .fix { margin-top: 7px; padding: 4px 10px; }
-  .warnrow { background: color-mix(in srgb, var(--warn, #d8a13a) 14%, var(--panel-2)); }
+  .warnrow { background: rgb(216 161 58 / 0.14); }
   .warnrow b { color: var(--text); }
   .ok .jname { color: var(--text); }
 

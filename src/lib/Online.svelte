@@ -814,15 +814,8 @@
         </button>
       {/each}
     </div>
+    </aside>
 
-    {#if !lfKey}
-      <p class="rail-hint">
-        Charts work as they are.
-        <button class="link" onclick={onSettings}>Add a Last.fm key</button> for loved tracks and
-        stations.
-      </p>
-    {/if}
-  </aside>
 
   <!-- ---------------- tracks ---------------- -->
   <main class="pane">
@@ -1232,22 +1225,6 @@
     font-size: 10.5px;
     color: var(--text-3);
     font-variant-numeric: tabular-nums;
-  }
-  .rail-hint {
-    margin: auto 0 0;
-    font-size: 11px;
-    line-height: 1.5;
-    color: var(--text-3);
-    padding: 0 8px;
-  }
-  .link {
-    border: 0;
-    background: none;
-    padding: 0;
-    font: inherit;
-    color: var(--accent, #8b7bff);
-    cursor: pointer;
-    text-decoration: underline;
   }
 
   /* ---------------- pane ---------------- */

@@ -1808,10 +1808,15 @@ fn set_hotkeys(app: tauri::AppHandle, accelerators: Vec<String>) -> Vec<String> 
             match acc.parse::<Shortcut>() {
                 Ok(sc) => {
                     let canonical = sc.to_string();
-                    if gs.register(sc).is_ok() {
-                        canonical
-                    } else {
-                        String::new()
+                    match gs.register(sc) {
+                        Ok(()) => {
+                            log::info!("hotkey {canonical} registered");
+                            canonical
+                        }
+                        Err(e) => {
+                            log::warn!("hotkey {acc} rejected: {e}");
+                            String::new()
+                        }
                     }
                 }
                 Err(_) => String::new(),
@@ -1840,6 +1845,23 @@ fn pad_from_args(argv: &[String]) -> Option<usize> {
         }
     }
     None
+}
+
+/// What the platform can do with global hotkeys, so the UI can be honest about it.
+#[derive(serde::Serialize)]
+struct Platform {
+    os: &'static str,
+    /// Wayland sessions do not deliver keys to X11 grabs
+    global_hotkeys: bool,
+}
+
+#[tauri::command]
+fn platform() -> Platform {
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    Platform {
+        os: std::env::consts::OS,
+        global_hotkeys: !(cfg!(target_os = "linux") && wayland),
+    }
 }
 
 /// Was the app started with `--pad N`? Returned once, so a late listener sees it.
@@ -1977,6 +1999,7 @@ pub fn run() {
                 .with_handler(|app, shortcut, event| {
                     if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                         use tauri::Emitter;
+                        log::info!("hotkey {} pressed", shortcut);
                         let _ = app.emit("hotkey", shortcut.to_string());
                     }
                 })
@@ -2056,6 +2079,7 @@ pub fn run() {
             update_check,
             presence_set,
             pending_pad,
+            platform,
             cache_usage,
             cache_clear,
             presence_connected,

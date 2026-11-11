@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
     import Select from "$lib/Select.svelte";
+  import { invoke } from "@tauri-apps/api/core";
+
   import { readPads, writePads, registerHotkeys, defaultPads, PAD_COUNT, type Pad } from "$lib/pads";
   import { Pencil, Check } from "$lib/icons";
 
@@ -18,7 +20,9 @@
 
   let pads: Pad[] = [];
   let editMode = false;
+  let hotkeysWork = true;
   let toast = "";
+
 
   $: padSoundOpts = [
     { value: "", label: "— empty —" },
@@ -117,8 +121,16 @@
 
   onMount(() => {
     pads = readPads();
-    void writePads(pads);
-    void syncHotkeys();
+    void (async () => {
+      try {
+        const p = await invoke<{ global_hotkeys: boolean }>("platform");
+        hotkeysWork = p.global_hotkeys;
+      } catch {
+        /* browser preview */
+      }
+    })();
+    // armed at launch by the page; registering again here just churns the grabs
+    if (pads.some((p) => p.hotkey && !p.canonical)) void syncHotkeys();
   });
 </script>
 
@@ -127,7 +139,15 @@
     <button class="ghost" class:on={editMode} onclick={() => (editMode = !editMode)}>
       {#if editMode}<Check size={14} /> Done{:else}<Pencil size={14} /> Edit pads{/if}
     </button>
-      <span class="hint">Click to play. Edit to assign a sound and a hotkey.</span>
+      <span class="hint">
+        Click to play. Edit to assign a sound and a hotkey.
+        {#if !hotkeysWork}
+          <b class="warn">
+            Global hotkeys need X11. On Wayland, bind <code>wagmify --pad N</code> in your desktop
+            shortcuts.
+          </b>
+        {/if}
+      </span>
     {#if toast}<span class="toast">{toast}</span>{/if}
   </div>
 

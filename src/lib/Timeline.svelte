@@ -493,7 +493,7 @@
               onpointerdown={(e) => onClipDown(e, c)}
               role="button"
               tabindex="0"
-              title={`${c.name} — drag to move, double-click to remove`}
+              title={`${c.name} · drag to move, double-click to remove`}
               ondblclick={() => removeClip(c.id)}
             >
               <span class="cn">{c.name}</span>
@@ -525,127 +525,210 @@
     min-height: 0;
     min-width: 0;
   }
-  /* sound picker */
+
+  /* ---- sound picker: a quiet list, no boxed-in feeling ---- */
   .picker {
-    width: 216px;
+    width: 220px;
     flex: none;
     display: flex;
     flex-direction: column;
     min-height: 0;
-    border-right: 1px solid var(--border);
+    padding-right: 6px;
   }
-  .pick-head { padding: 8px; }
+  .pick-head { padding: 12px 10px 8px 14px; }
   .pick-head input {
     width: 100%;
     box-sizing: border-box;
     background: var(--panel-2);
-    border: 1px solid var(--border);
-    border-radius: 7px;
+    border: 1px solid transparent;
+    border-radius: 9px;
     color: var(--text);
-    padding: 6px 9px;
+    padding: 7px 10px;
     font-size: 12px;
+    outline: none;
+    transition: border-color 140ms ease, background 140ms ease;
   }
-  .pick-list { flex: 1; overflow-y: auto; padding: 0 4px 8px; }
+  .pick-head input:focus {
+    border-color: rgb(139 123 255 / 0.45);
+    background: var(--panel-3);
+  }
+  .pick-head input::placeholder { color: var(--text-3, var(--muted)); }
+
+  .pick-list { flex: 1; overflow-y: auto; padding: 0 6px 10px; }
   .pick {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 8px;
     width: 100%;
-    background: none;
+    padding: 7px 8px;
     border: 0;
-    color: var(--text-2);
+    border-radius: 8px;
+    background: none;
+    color: var(--text-2, var(--muted));
     text-align: left;
-    padding: 6px 8px;
-    border-radius: 7px;
-    cursor: pointer;
     font-size: 12px;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
   }
   .pick:hover { background: var(--panel-2); color: var(--text); }
   .pick .pn { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pick .add { opacity: 0; color: var(--accent-2); }
+  .pick .add { opacity: 0; color: var(--accent-2, #a48bff); transition: opacity 120ms ease; }
   .pick:hover .add { opacity: 1; }
-  .empty { color: var(--muted); font-size: 12px; padding: 10px; margin: 0; }
+  .empty {
+    color: var(--text-3, var(--muted));
+    font-size: 11.5px;
+    line-height: 1.5;
+    padding: 12px 10px;
+    margin: 0;
+  }
 
-  /* arranger */
+  /* ---- arranger ---- */
   .arrange { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
   .transport {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
+    gap: 10px;
+    padding: 10px 16px;
   }
   .play {
     display: grid;
     place-items: center;
-    width: 30px;
-    height: 30px;
-    border-radius: 999px;
+    width: 32px;
+    height: 32px;
     border: 0;
+    border-radius: 50%;
     cursor: pointer;
     color: #fff;
-    background: linear-gradient(180deg, var(--accent-2), var(--accent));
+    background: linear-gradient(180deg, var(--accent-2, #a48bff), var(--accent, #8b7bff));
+    box-shadow: 0 2px 10px rgb(139 123 255 / 0.35);
+    transition: transform 120ms ease, box-shadow 120ms ease;
   }
-  .ghost {
-    background: var(--panel-3);
-    color: var(--text-2);
-    border: 0;
-    border-radius: 7px;
-    padding: 6px 9px;
-    cursor: pointer;
-    display: inline-flex;
-  }
-  .ghost.on { color: var(--accent-2); box-shadow: inset 0 0 0 1px var(--accent); }
-  .ghost:disabled { opacity: 0.45; cursor: default; }
-  .time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 92px; }
-  .spacer { flex: 1; }
-  .zoom { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
-  .zoom input { width: 132px; }
-  .ok { color: var(--ok); font-size: 11px; }
+  .play:hover { box-shadow: 0 3px 14px rgb(139 123 255 / 0.5); }
+  .play:active { transform: translateY(1px); }
 
+  .ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 11px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-2, var(--muted));
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: border-color 120ms ease, color 120ms ease;
+  }
+  .ghost:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+  .ghost.on {
+    color: var(--accent-2, #a48bff);
+    border-color: rgb(139 123 255 / 0.45);
+    background: rgb(139 123 255 / 0.1);
+  }
+  .ghost:disabled { opacity: 0.4; cursor: default; }
+
+  .time {
+    font-size: 11.5px;
+    color: var(--text-3, var(--muted));
+    font-variant-numeric: tabular-nums;
+    min-width: 96px;
+    letter-spacing: 0.01em;
+  }
+  .spacer { flex: 1; }
+  .zoom {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--text-3, var(--muted));
+  }
+  .ok { color: var(--ok); font-size: 11.5px; }
+
+  /* a slim, quiet slider */
+  .zoom input {
+    width: 120px;
+    appearance: none;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+    outline: none;
+  }
+  .zoom input::-webkit-slider-thumb {
+    appearance: none;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--accent, #8b7bff);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+    cursor: pointer;
+  }
+
+  /* ---- the lanes ---- */
   .lane { flex: 1; overflow: auto; min-height: 0; position: relative; }
   .inner { position: relative; }
+
   .ruler {
     position: relative;
-    height: 22px;
-    border-bottom: 1px solid var(--border);
+    height: 26px;
     cursor: pointer;
     user-select: none;
   }
   .tick { position: absolute; top: 0; bottom: 0; }
-  .tick i { position: absolute; left: 0; top: 16px; bottom: 0; width: 1px; background: rgba(127, 127, 127, 0.13); }
-  .tick.major i { top: 11px; background: var(--border); }
+  .tick i {
+    position: absolute;
+    left: 0;
+    top: 18px;
+    bottom: 0;
+    width: 1px;
+    background: rgb(255 255 255 / 0.05);
+  }
+  .tick.major i { top: 12px; background: rgb(255 255 255 / 0.11); }
   .tick em {
     position: absolute;
-    left: 3px;
-    top: 3px;
+    left: 4px;
+    top: 2px;
     font-style: normal;
     font-size: 9px;
-    color: var(--muted);
+    color: var(--text-3, var(--muted));
     font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
   }
+
   .rows { position: relative; }
-  .row { position: absolute; left: 0; right: 0; border-bottom: 1px solid rgba(127, 127, 127, 0.1); }
-  .row.alt { background: rgba(127, 127, 127, 0.045); }
+  .row { position: absolute; left: 0; right: 0; box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.04); }
+  .row.alt { background: rgb(255 255 255 / 0.015); }
+
+  /* clips: soft, no hard border, readable at any zoom */
   .clip {
     position: absolute;
-    border-radius: 6px;
-    background: color-mix(in srgb, var(--accent) 26%, var(--panel-2));
-    border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-    color: var(--text);
     display: flex;
     align-items: center;
-    padding: 0 16px 0 8px;
+    padding: 0 16px 0 9px;
+    border: 0;
+    border-radius: 7px;
+    background:
+      linear-gradient(180deg, rgb(139 123 255 / 0.32), rgb(139 123 255 / 0.2)),
+      var(--panel-2);
+    box-shadow: inset 0 0 0 1px rgb(139 123 255 / 0.28);
+    color: var(--text);
     cursor: grab;
     overflow: hidden;
     touch-action: none;
+    transition: box-shadow 120ms ease, background 120ms ease;
   }
-  .clip.sel { border-color: var(--accent-2); box-shadow: 0 0 0 2px var(--accent-ring); }
+  .clip:hover { background: linear-gradient(180deg, rgb(139 123 255 / 0.4), rgb(139 123 255 / 0.26)), var(--panel-2); }
+  .clip.sel {
+    box-shadow:
+      inset 0 0 0 1px var(--accent-2, #a48bff),
+      0 0 0 2px rgb(139 92 246 / 0.3);
+  }
   .clip:active { cursor: grabbing; }
-  .clip.narrow { padding: 0; }
+  .clip.narrow { padding: 0; border-radius: 5px; }
   .clip.narrow .cn { display: none; }
   .clip .cn {
-    font-size: 11px;
+    font-size: 10.5px;
+    letter-spacing: -0.005em;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -654,23 +737,25 @@
     position: absolute;
     right: 2px;
     top: 2px;
-    border: 0;
-    background: none;
-    color: var(--muted);
-    cursor: pointer;
-    padding: 1px;
     display: grid;
     place-items: center;
+    padding: 1px;
+    border: 0;
+    background: none;
+    color: var(--text-3, var(--muted));
+    cursor: pointer;
     opacity: 0;
+    transition: opacity 120ms ease, color 120ms ease;
   }
   .clip:hover .del { opacity: 1; }
   .clip .del:hover { color: var(--danger); }
+
   .playhead {
     position: absolute;
     top: 0;
     bottom: 0;
     width: 1px;
-    background: var(--accent-2);
+    background: rgb(255 255 255 / 0.45);
     pointer-events: none;
   }
 </style>

@@ -1353,7 +1353,7 @@
   /* an active toggle is a state, so it gets a tint and a hairline -- not a slab */
   button.ghost.on {
     background: var(--accent-dim);
-    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    border-color: rgb(139 123 255 / 0.45);
     color: var(--accent-2);
   }
   button.primary {
