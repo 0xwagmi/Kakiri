@@ -1,182 +1,125 @@
 <p align="center">
-  <img src="static/icon.png" width="140" height="140" alt="Wagmify Soundboard" />
+  <img src="static/icon.png" width="140" height="140" alt="Wagmify" />
 </p>
 
-<h1 align="center">Wagmify Soundboard</h1>
+<h1 align="center">Wagmify</h1>
 
-<p align="center"><em>Play sounds through a virtual microphone in Discord — with your voice.</em></p>
+<p align="center"><em>Soundboard and music player that Discord hears as your microphone.</em></p>
 
 <p align="center">
   <img alt="status" src="https://img.shields.io/badge/status-early%20alpha-orange" />
-  <img alt="platform" src="https://img.shields.io/badge/audio-Linux%20(PipeWire)-informational" />
+  <img alt="audio" src="https://img.shields.io/badge/audio-Linux%20(PipeWire)-informational" />
   <img alt="license" src="https://img.shields.io/badge/license-MIT-blue" />
 </p>
 
-Cross-platform desktop soundboard that plays audio files (and later, streams)
-**through a virtual microphone** so other people in Discord hear it as if it
-were your voice.
+Wagmify plays audio into a virtual microphone, so everyone in the call hears it as
+your voice. Your own mic still works at the same time: talk and fire a sound effect
+over yourself, and nobody needs to know which came from where.
 
-> **Status: early alpha.** Fully functional on **Linux / PipeWire** (native
-> `pipewire-rs`). Windows/macOS now have a **`cpal` (WASAPI/CoreAudio) backend**
-> and are pending real-hardware testing. Not production-ready — see
-> [`docs/ROADMAP.md`](docs/ROADMAP.md).
+It started as a soundboard. It is now two things in one window:
 
-## Platform support
+**Soundboard.** Your folders of clips, a 16-pad grid with global hotkeys, and a
+timeline for arranging a few of them. Click to send to the call, hold the headphone
+button to hear it yourself first.
 
-| Platform | Builds / runs | Audio | Virtual mic |
-|----------|:-------------:|:-----:|-------------|
-| **Linux** (PipeWire) | ✅ | ✅ native `pipewire-rs` (+ `pw-play`/`pw-record` fallback) | ✅ auto (`pw-loopback`) |
-| **Windows** | ✅ | ✅ `cpal` (WASAPI) — *needs testing* | manual: VB-CABLE |
-| **macOS** | ✅ | ✅ `cpal` (CoreAudio) — *needs testing* | manual: BlackHole |
+**Player.** Search a track and play it into the call, the way Spotify does it in your
+presence. Tracks stream, get cached as they play, and save into your music library
+when you want to keep one. If you have a Last.fm key, your loved tracks and tag
+stations show up too. Music is in the Online tab, next to the soundboard.
 
-## Features
+Some smaller things: a bar at the bottom keeps the current track reachable from any
+tab. Optional Discord presence shows what you are playing, sent to Discord on your
+machine and nowhere else. On launch it checks the releases page and tells you when
+a new version is out, once.
 
-- Folder / playlist browser with search, durations, and a now-playing bar
-- Play into a virtual mic; **monitor + per-sound preview**
-- 16-pad grid with **global hotkeys**; retrigger modes **Layer / Choke / Toggle**
-- **Live voice input** mixed into the virtual mic (talk *and* play sounds)
-- Decodes mp3 / m4a / flac / ogg / wav + more via `symphonia` (no ffmpeg)
+> **Early alpha.** The Linux / PipeWire path is what I run and test. Windows and
+> macOS build and have a `cpal` backend, but their audio has not been tested on real
+> hardware yet, so treat them as unfinished.
 
-Closing the window keeps Wagmify running in the tray (left click toggles it, Quit
-is in the tray menu) — a soundboard is most useful while its window is closed.
-On GNOME the tray needs the AppIndicator extension, which Ubuntu ships enabled
-(`gnome-shell-extension-appindicator` on other distributions).
+## Platforms
 
-## Why Rust
+| Platform | Runs | Audio | Virtual mic |
+|---|:--:|---|---|
+| Linux (PipeWire) | yes | native `pipewire-rs` | created for you (`pw-loopback`) |
+| Windows | yes | `cpal` (WASAPI) | you install VB-CABLE |
+| macOS | yes | `cpal` (CoreAudio) | you install BlackHole |
 
-- Single self-contained binary per OS — no Python runtime, no ffmpeg, no
-  `pw-play` shell-outs required for decoding (`symphonia` is pure Rust).
-- Low-latency, real-time audio: `symphonia` (decode) + `pipewire-rs` on Linux, `cpal` elsewhere.
-- Native-looking UI via **Tauri 2** (Rust core + web frontend) with a small
-  download; global hotkeys, tray, single-instance all have first-class plugins.
-- Cross-platform packaging (`tauri build` → `.msi`, `.dmg`, `.AppImage`/`.deb`).
-
-## The one hard problem
-
-Every OS needs a **virtual microphone** to feed Discord. The app cannot
-magically create one everywhere:
-
-| OS      | Virtual cable                      | Who installs it        |
-|---------|------------------------------------|------------------------|
-| Linux   | PipeWire `pw-loopback`             | **App can create it**  |
-| Windows | VB-Audio VB-CABLE / VoiceMeeter    | User (free download)   |
-| macOS   | BlackHole 2ch                      | User (`brew install`)  |
-
-The app detects it, guides setup, and targets it. Details in
+Every OS needs a virtual cable for this to work, and only Linux lets a program
+create one. On Windows and macOS you install the free driver once, Wagmify finds it
+and routes to it. The Discord side is one setting: pick the virtual device as your
+input, and turn off Noise Suppression, Echo Cancellation and Automatic Gain, which
+would otherwise chew up the audio. Per-platform details are in
 [`docs/PLATFORM-AUDIO.md`](docs/PLATFORM-AUDIO.md).
 
-## Folder map
+## Install
 
-```
-README.md              ← you are here
-Cargo.toml             cargo workspace (audio-core + src-tauri)
-crates/audio-core/     the real-time audio engine (Rust lib)
-  src/bus.rs             mix-bus format + test-tone generator
-  src/decode.rs          symphonia decode + channel-map + linear resample
-  src/mixer.rs           multi-voice mixer with soft limiter
-  src/engine.rs          engine + writer/reader threads; mic + monitor + live input
-  src/input/             AudioInput trait + pw-record backend (voice passthrough)
-  src/library.rs         folder tree scan + duration probe
-  src/devices.rs         cpal device enum + PipeWire node listing
-  src/output/            AudioOutput trait + pw-play backend (ADR-4)
-  src/bin/spike-routing.rs   Spike CLI (list / play / file / passthrough / mic)
-src-tauri/             Tauri backend (IPC commands)
-  src/lib.rs             devices, virtual mic, library_scan, play_sound, voices
-src/                   SvelteKit frontend
-  routes/+page.svelte    top bar, folder/playlist browser, view switch, now-playing
-  lib/SoundCard.svelte   sound tile (click = to call, 🎧 = local preview)
-  lib/Pads.svelte        16-pad grid, edit mode, global hotkeys
-docs/
-  PLAN.md              goals, non-goals, user stories, feature tiers, open questions
-  ARCHITECTURE.md      components, crates, audio pipeline, threading, packaging
-  DECISIONS.md         ADR log (language, UI, audio engine, routing strategy)
-  PLATFORM-AUDIO.md    per-OS virtual cable setup + Discord settings gotchas
-  ROADMAP.md           phased milestones with acceptance criteria
-  UI.md                wireframes / screen inventory
-```
-
-## Install from a release (Linux, no sudo)
-
-If you just want the app, without a Rust/Node toolchain:
+Linux, no root, from the latest release:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/0xwagmi/Wagmify/main/scripts/install-release.sh | bash
 ```
 
-It downloads the ~7 MB `.deb` from the latest release, verifies it against the
-release's `SHA256SUMS`, and installs the binary, icons and menu entry into
-`~/.local` — nothing system-wide, no root. `--version v0.1.2` pins a release,
-`--appimage` uses the AppImage instead (needed on non-Debian systems, ~82 MB).
+It downloads the `.deb` from the newest release, checks it against `SHA256SUMS`, and
+puts the binary, icons and menu entry in `~/.local`. `--version v0.2.0` pins a
+release; `--appimage` uses the AppImage instead, which is what you want off Debian.
 
-## Install from source (Linux, no sudo)
+Windows: take `Wagmify_<version>_x64-setup.exe` from the releases page.
 
-```bash
-npm install
-./scripts/install.sh           # builds the app and installs it (no sudo)
-```
-
-That puts a `wagmify` command in `~/.local/bin`, installs the icon in every size
-under `~/.local/share/icons/hicolor`, and adds a menu entry, so Wagmify shows up
-in your application launcher like any other program:
-
-```bash
-wagmify                 # launches the app
-./scripts/uninstall.sh            # removes the command, icon and menu entry
-./scripts/uninstall.sh --purge    # ...and its settings + downloaded tools
-```
-
-The build embeds the UI, so the installed app needs nothing else running — it is
-**3 processes / ~255 MiB** instead of a dev server's 7 / ~550 MiB.
-
-That build embeds the UI, so it runs **3 processes / ~255 MiB** instead of the
-dev install's 7 / ~550 MiB (npm + Vite + Node are gone). Note that the two
-builds use different localStorage origins (`tauri://localhost` vs
-`http://localhost:1420`), so settings, library folders and the timeline do not
-carry over between them — pick one and stay with it.
-
-## Releasing
-
-Releases are built by CI, not by hand, and only for a version tag (pushing to
-`dev`/`main` never starts a build):
-
-```bash
-# 1. bump the version in src-tauri/tauri.conf.json, package.json and Cargo.toml
-# 2. add the release to CHANGELOG.md
-git commit -am "Release vX.Y.Z"
-git tag -a vX.Y.Z -m "Wagmify vX.Y.Z"
-git push origin dev --follow-tags        # CI builds and publishes
-```
-
-`.github/workflows/release.yml` checks that the tag matches the app version,
-runs the test suite, builds on `ubuntu-24.04` (PipeWire 1.0 headers are required),
-attaches `.deb` / `.rpm` / `.AppImage` plus `SHA256SUMS` to the release, and
-marks `v0.x` tags as pre-releases. Windows and macOS jobs are written but
-commented out until their audio path has been tested on real hardware.
-
-It can also be run by hand from the Actions tab (`workflow_dispatch`), which
-builds a draft release for an existing tag.
-
-## Quickstart (dev, Linux)
+From source, on any of the three:
 
 ```bash
 npm install
-npm run tauri dev          # debug build + Vite + hot reload, rebuilds on save
-./scripts/install.sh       # packaged build into ~/.local (wagmify, icon, menu entry)
+npm run tauri dev        # development window, rebuilds on save
+./scripts/install.sh     # packaged build into ~/.local, adds the wagmify command
 ```
 
-The backend can also be exercised headlessly with the spike CLI:
+`./scripts/uninstall.sh` removes it again, `--purge` takes the settings and
+downloaded tools with it.
+
+Closing the window leaves Wagmify in the tray, since a soundboard is most useful
+while its window is shut. On GNOME the tray needs the AppIndicator extension, which
+Ubuntu ships enabled.
+
+## Requirements
+
+- Linux: PipeWire 1.0 or newer. Everything else is bundled.
+- Music search needs `yt-dlp`, which the import panel downloads into the app's data
+  folder on first use. Nothing else is installed system-wide.
+- Last.fm is optional. Create an application at `last.fm/api`, paste the API key in
+  Settings, and tag stations and loved tracks appear. No key, no Last.fm, everything
+  else still works.
+
+## How it is built
+
+Rust for the audio, Tauri 2 for the window, Svelte for the interface. Decoding is
+`symphonia`, pure Rust, so there is no ffmpeg to install. On Linux the engine talks
+PipeWire directly through `pipewire-rs`. The result is one binary with the UI baked
+in, no runtime to install.
+
+```
+crates/audio-core/     the audio engine: decode, mix, stream, cache, denoise
+src-tauri/             the app: commands, library, Online, Discord, updates
+src/                   Svelte frontend
+docs/                  architecture, decisions, platform notes, roadmap
+```
+
+The engine keeps one persistent virtual mic, mixes every voice into it and applies
+its own limiter, so five sounds at once do not clip. Streamed music and local files
+go through the same mixer. There is an optional RNNoise gate on the mic path for
+people whose real mic hisses between words.
+
+## Tests and releases
 
 ```bash
-cargo run -p audio-core --bin spike-routing -- list
-cargo run -p audio-core --bin spike-routing -- mic up
-cargo run -p audio-core --bin spike-routing -- play --target Soundboard-Sink --repeat 2
+cargo test --workspace     # engine, cache, matching, presence, updates
+npm run check              # svelte-check
 ```
 
-What Spike S1 proved: a generated 440 Hz tone written through
-`AudioOutput`/`PipeWireCliOutput` was captured back off `Soundboard-Sink`'s
-monitor at exactly `peak = 0.25` (the requested amplitude), and `pw-loopback`
-exposed `Soundboard Mic` as a Discord-recordable source.
+Releases are cut by CI from a tag, never by hand. Bumping the version, tagging and
+pushing `vX.Y.Z` builds Linux and Windows, runs the tests, checks that the tag
+matches the app version, and attaches the installers plus `SHA256SUMS`. `0.x` tags
+are published as pre-releases.
 
 ## License
 
-MIT © 0xwagmi — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). The interface and icon art are part of the repository.
