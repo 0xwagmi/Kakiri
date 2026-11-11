@@ -541,7 +541,6 @@
     outline-offset: 2px;
   }
 
-  .btn:focus-visible { outline: 2px solid var(--accent-2, #8b7bff); outline-offset: 2px; }
   .muted.small { font-size: 11px; line-height: 1.5; opacity: 0.9; }
 
   /* an explanation on request: a quiet "?" next to the heading */

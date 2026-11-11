@@ -533,9 +533,9 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    padding-right: 6px;
+    padding-right: 10px;
   }
-  .pick-head { padding: 12px 10px 8px 14px; }
+  .pick-head { padding: 0 0 10px; }
   .pick-head input {
     width: 100%;
     box-sizing: border-box;
@@ -554,7 +554,7 @@
   }
   .pick-head input::placeholder { color: var(--text-3, var(--muted)); }
 
-  .pick-list { flex: 1; overflow-y: auto; padding: 0 6px 10px; }
+  .pick-list { flex: 1; overflow-y: auto; padding: 0 0 10px; }
   .pick {
     display: flex;
     align-items: center;
@@ -583,13 +583,20 @@
   }
 
   /* ---- arranger ---- */
-  .arrange { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .arrange {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    padding-right: 4px;
+  }
 
   .transport {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 16px;
+    padding: 10px 4px 12px 0;
   }
   .play {
     display: grid;
@@ -665,7 +672,14 @@
   }
 
   /* ---- the lanes ---- */
-  .lane { flex: 1; overflow: auto; min-height: 0; position: relative; }
+  .lane {
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+    position: relative;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+  }
   .inner { position: relative; }
 
   .ruler {

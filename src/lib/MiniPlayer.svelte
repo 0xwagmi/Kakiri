@@ -75,15 +75,27 @@
 </div>
 
 <style>
+  /* a floating pane of glass: the blur pulls colour from whatever is behind it,
+     the inner highlight gives the top edge something to catch */
   .mini {
+    position: relative;
     flex: none;
-    height: 48px;
+    height: 52px;
     display: flex;
     align-items: center;
     gap: 14px;
-    padding: 0 14px 0 10px;
-    background: var(--panel-2, #1b1a21);
-    border-top: 1px solid var(--border, rgb(255 255 255 / 0.08));
+    margin: 0 12px 10px;
+    padding: 0 12px 0 10px;
+    border-radius: 15px;
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.075), rgb(255 255 255 / 0.028));
+    border: 1px solid rgb(255 255 255 / 0.09);
+    -webkit-backdrop-filter: blur(22px) saturate(170%);
+    backdrop-filter: blur(22px) saturate(170%);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.14),
+      inset 0 -1px 0 rgb(0 0 0 / 0.18),
+      0 8px 24px rgb(0 0 0 / 0.28);
+    overflow: hidden;
     animation: fade 160ms ease;
   }
   @keyframes fade {

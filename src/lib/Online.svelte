@@ -1020,7 +1020,7 @@
         </div>
       {/if}
     {:else if !error}
-      <div class="empty">
+      <div class="empty-list">
         <ListMusic size={22} />
         <p>{collection.kind === "recent" ? "Nothing played yet. It fills up as you listen." : "Nothing here yet."}</p>
       </div>
@@ -1170,14 +1170,11 @@
   .online {
     overflow: hidden;
     display: grid;
-    grid-template-columns: 204px minmax(0, 1fr);
+    grid-template-columns: 220px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
-    gap: 18px;
+    gap: 20px;
     height: 100%;
-    padding: 16px 20px 14px;
-    max-width: 1120px;
-    margin: 0 auto;
-    width: 100%;
+    padding: 16px 24px 14px 20px;
   }
 
   /* ---------------- rail ---------------- */
@@ -1188,8 +1185,7 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-    padding-right: 14px;
-    border-right: 1px solid var(--line, rgb(255 255 255 / 0.06));
+    padding-right: 0;
     overflow-y: auto;
   }
   .rail-group { display: flex; flex-direction: column; gap: 1px; }
@@ -1229,6 +1225,7 @@
 
   /* ---------------- pane ---------------- */
   .pane {
+    scrollbar-gutter: stable;
     scrollbar-width: thin;
     scrollbar-color: rgb(255 255 255 / 0.14) transparent;
     grid-row: 1;
@@ -1237,7 +1234,8 @@
     gap: 14px;
     min-width: 0;
     overflow-y: auto;
-    padding-right: 4px;
+    /* keep the row actions off the scrollbar, which lives on this edge */
+    padding-right: 14px;
   }
   .bar {
     position: sticky;
@@ -1289,11 +1287,12 @@
     display: flex;
     flex-direction: column;
     align-items: center;
+    align-self: center;
     text-align: center;
     gap: 10px;
-    padding: 44px 24px 56px;
-    max-width: 380px;
+    width: min(400px, 100%);
     margin: 0 auto;
+    padding: 44px 24px 56px;
   }
   .empty-title {
     margin: 6px 0 0;
@@ -1313,6 +1312,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     .empty :global(svg) { animation: none; }
+    .now, .now::before { animation: none; }
   }
   .notice strong { display: block; color: var(--text); font-size: 13px; font-weight: 600; }
   .notice p { margin: 3px 0 0; color: var(--text-3); }
@@ -1575,8 +1575,15 @@
     50% { transform: scaleY(1); }
   }
 
-  .empty { display: grid; place-items: center; gap: 8px; padding: 50px 0; color: var(--text-3); font-size: 12px; }
-  .empty p { margin: 0; }
+  .empty-list {
+    display: grid;
+    place-items: center;
+    gap: 8px;
+    padding: 50px 0;
+    color: var(--text-3);
+    font-size: 12px;
+  }
+  .empty-list p { margin: 0; }
 
   .sk {
     background: linear-gradient(90deg, var(--panel-2), var(--panel-3), var(--panel-2));
@@ -1591,18 +1598,45 @@
   }
 
   /* ---------------- now playing ---------------- */
+  /* the same glass as the app-wide mini player, so the two read as one surface */
   .now {
+    position: relative;
     grid-column: 1 / -1;
     grid-row: 2;
     display: flex;
     align-items: center;
     gap: 14px;
     margin-top: 10px;
-    padding: 9px 14px;
-    border-radius: 13px;
-    background: linear-gradient(180deg, var(--panel-2), var(--panel-1, var(--panel-2)));
-    box-shadow: 0 10px 30px rgb(0 0 0 / 0.32), inset 0 0 0 1px var(--line, rgb(255 255 255 / 0.07));
+    padding: 10px 16px 10px 12px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.075), rgb(255 255 255 / 0.028));
+    border: 1px solid rgb(255 255 255 / 0.09);
+    -webkit-backdrop-filter: blur(24px) saturate(175%);
+    backdrop-filter: blur(24px) saturate(175%);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.14),
+      inset 0 -1px 0 rgb(0 0 0 / 0.18),
+      0 12px 34px rgb(0 0 0 / 0.34);
+    overflow: hidden;
     animation: bar-in 240ms cubic-bezier(0.2, 0.7, 0.3, 1);
+  }
+  .now::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      100deg,
+      transparent 18%,
+      rgb(255 255 255 / 0.05) 40%,
+      transparent 56%
+    );
+    background-size: 220% 100%;
+    animation: now-sheen 11s ease-in-out infinite;
+  }
+  @keyframes now-sheen {
+    0%, 100% { background-position: 130% 0; }
+    50% { background-position: -30% 0; }
   }
   @keyframes bar-in {
     from { opacity: 0; transform: translateY(10px); }
@@ -1818,7 +1852,6 @@
     display: grid;
     place-items: center;
     cursor: pointer;
-    margin: 0 auto;
   }
   .tick:hover { border-color: var(--text-3); }
   .tick.on { background: var(--accent, #8b7bff); border-color: var(--accent, #8b7bff); }

@@ -197,7 +197,8 @@
   .pads {
     flex: 1;
     overflow-y: auto;
-    padding: 18px 20px 22px;
+    padding: 16px 24px 20px 20px;
+    scrollbar-gutter: stable;
   }
 
   .head {
@@ -208,8 +209,22 @@
     flex-wrap: wrap;
   }
   .hint {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 3px;
     color: var(--muted);
     font-size: 11.5px;
+  }
+  .warn {
+    color: var(--warn, #d8a13a);
+    font-weight: 500;
+    font-size: 11px;
+  }
+  .warn code {
+    background: rgb(255 255 255 / 0.06);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--text-2);
   }
   .toast { margin-left: auto; color: var(--ok); font-size: 11.5px; }
 

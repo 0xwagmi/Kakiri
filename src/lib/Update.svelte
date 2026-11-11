@@ -109,6 +109,30 @@
     display: flex;
     gap: 8px;
     align-self: flex-end;
-    margin-top: 12px;
+    margin-top: 14px;
   }
+  .ghost,
+  .primary {
+    padding: 7px 14px;
+    border-radius: 9px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .ghost {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-2);
+  }
+  .ghost:hover { color: var(--text); border-color: var(--accent); }
+  .primary {
+    border: 0;
+    background: linear-gradient(180deg, var(--accent-2, #a48bff), var(--accent, #8b7bff));
+    color: #fff;
+  }
+  .primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .primary:disabled { opacity: 0.6; cursor: default; }
+  .ghost:focus-visible,
+  .primary:focus-visible { outline: 2px solid var(--accent-2, #a48bff); outline-offset: 2px; }
 </style>

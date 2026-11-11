@@ -15,7 +15,9 @@
   import Update from "$lib/Update.svelte";
   import MiniPlayer from "$lib/MiniPlayer.svelte";
   import { readPads, registerHotkeys, padForAccelerator } from "$lib/pads";
-  import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog, Volume2, Download } from "$lib/icons";
+  import {
+    Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog, Volume2, Download, Folder, FolderOpen,
+  } from "$lib/icons";
 
   type Sound = {
     id: string;
@@ -1035,7 +1037,14 @@
           role="button"
           tabindex="0"
         >
-          <span class="nav-name">{item.depth === 0 ? "📁" : "📂"} {item.f.name}</span>
+          <span class="nav-name">
+            {#if selected?.path === item.f.path}
+              <FolderOpen size={13} />
+            {:else}
+              <Folder size={13} />
+            {/if}
+            <span class="nav-text">{item.f.name}</span>
+          </span>
           <span class="count">{item.f.total_sounds}</span>
           {#if item.depth === 0}
             <button
@@ -1052,7 +1061,7 @@
 
     <section class="content">
       <div class="content-head">
-        <input class="search" placeholder="Search all sounds…" bind:value={search} />
+        <input class="search toolbar-search" placeholder="Search all sounds…" bind:value={search} />
       </div>
 
       {#if search.trim()}
@@ -1068,7 +1077,7 @@
           <div class="chips">
             {#each selected.children as c (c.path)}
               <button class="chip" onclick={() => (selected = c)}>
-                📂 {c.name} <span class="count">{c.total_sounds}</span>
+                <Folder size={12} /> {c.name} <span class="count">{c.total_sounds}</span>
               </button>
             {/each}
           </div>
@@ -1375,8 +1384,8 @@
 
   .layout { flex: 1; display: flex; min-height: 0; }
   .sidebar {
-    width: 260px; flex: none; overflow-y: auto;
-    border-right: 1px solid var(--border); padding: 8px 0;
+    width: 220px; flex: none; overflow-y: auto;
+    padding: 10px 0;
   }
   .side-head {
     display: flex; justify-content: space-between; align-items: center;
@@ -1384,24 +1393,66 @@
     text-transform: uppercase; color: var(--muted);
   }
   .nav {
-    display: flex; align-items: center; gap: 8px;
-    padding: 6px 10px; font-size: 13px; cursor: pointer; border-radius: 6px; margin: 0 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 1px 8px;
+    padding: 7px 10px;
+    border-radius: 9px;
+    font-size: 12.5px;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
   }
-  .nav:hover { background: var(--panel-2); }
-  .nav.active {
-    background: var(--panel-3);
-    box-shadow: inset 2px 0 0 var(--accent);
+  .nav:hover { background: var(--panel-2); color: var(--text); }
+  .nav.active { background: var(--panel-3); color: var(--text); }
+  .nav-name {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
   }
-  :global(.nav-name) { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  :global(.count) { font-size: 11px; color: var(--muted); }
+  .nav-name :global(svg) { flex: none; color: var(--text-3, var(--muted)); opacity: 0.9; }
+  .nav.active .nav-name :global(svg) { color: var(--accent-2, #a48bff); opacity: 1; }
+  .nav-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .count {
+    flex: none;
+    font-size: 10.5px;
+    color: var(--text-3, var(--muted));
+    font-variant-numeric: tabular-nums;
+    opacity: 0.75;
+  }
 
-  .content { flex: 1; overflow-y: auto; padding: 14px 18px; min-width: 0; }
+  .content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 24px 14px 20px;
+    min-width: 0;
+    scrollbar-gutter: stable;
+  }
   .content-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-  .search { width: 260px; }
+  .toolbar-search { width: 260px; }
   h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 16px 0 8px; }
 
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-  .chip { background: var(--panel-3); color: var(--text-2); }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid transparent;
+    color: var(--text-2);
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+  }
+  .chip:hover { background: var(--panel-3); border-color: rgb(139 123 255 / 0.35); color: var(--text); }
+  .chip :global(svg) { color: var(--text-3, var(--muted)); }
+  .chip .count { color: var(--text-3, var(--muted)); font-variant-numeric: tabular-nums; }
   .grid {
     display: grid; gap: 4px;
     grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
@@ -1420,6 +1471,7 @@
   .empty-state .art :global(svg) { width: 100%; height: 100%; display: block; }
   .empty-state p { margin: 0; font-size: 13px; letter-spacing: 0.01em; }
 
+  /* the floating mini player sits above this bar, so keep the seam quiet */
   .nowbar {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     padding: 8px 16px; background: var(--panel); border-top: 1px solid var(--border); min-height: 42px;
@@ -1430,7 +1482,7 @@
   }
   .now.mon { background: var(--accent-dim); }
   .now .lbl { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .now input[type="range"] { width: 72px; flex: none; }
+  .now .seek { width: 72px; flex: none; }
   .now input.gain { width: 54px; flex: none; opacity: .85; }
   .toast {
     margin-left: auto;

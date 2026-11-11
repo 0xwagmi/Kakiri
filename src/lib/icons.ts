@@ -17,6 +17,8 @@ export { default as Download } from "lucide-svelte/icons/download";
 export { default as Bookmark } from "lucide-svelte/icons/bookmark";
 export { default as CircleHelp } from "lucide-svelte/icons/circle-help";
 export { default as Link2 } from "lucide-svelte/icons/link-2";
+export { default as Folder } from "lucide-svelte/icons/folder";
+export { default as FolderOpen } from "lucide-svelte/icons/folder-open";
 export { default as FolderUp } from "lucide-svelte/icons/folder-up";
 export { default as FileAudio } from "lucide-svelte/icons/file-audio";
 export { default as Upload } from "lucide-svelte/icons/upload";
