@@ -235,6 +235,18 @@
     }
   }
 
+  function clearRecent() {
+    recent = [];
+    try {
+      localStorage.removeItem(LS_RECENT);
+    } catch {
+      /* storage blocked: the list is already empty in memory */
+    }
+    if (collection.kind === "recent") rows = [];
+    notice = "History cleared";
+    setTimeout(() => (notice = ""), 2500);
+  }
+
   function remember(t: Track) {
     const key = `${t.artist} — ${t.title}`;
     // Remember what the track *is*, not where a copy happened to live: a saved
@@ -878,6 +890,11 @@
           <button class="ghost" class:on={shuffle} onclick={() => { shuffle = !shuffle; void playAll(true); }}>
             <Shuffle size={13} /> Shuffle
           </button>
+          {#if collection.kind === "recent"}
+            <button class="ghost" onclick={clearRecent} title="Forget what has been played">
+              <Trash2 size={13} /> Clear
+            </button>
+          {/if}
         </div>
       </div>
 
