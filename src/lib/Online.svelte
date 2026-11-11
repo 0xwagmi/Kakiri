@@ -2,8 +2,17 @@
   import { onMount, onDestroy } from "svelte";
 
   import CatMark from "./CatMark.svelte";
+  import {
+    readPlaylists,
+    writePlaylists,
+    newPlaylist,
+    withTrack,
+    withoutTrack,
+    type Playlist,
+  } from "./playlists";
   import { invoke } from "@tauri-apps/api/core";
   import {
+    ListPlus,
     Search,
     Play,
     Pause,
@@ -40,7 +49,9 @@
   };
 
   type Collection = {
-    kind: "trending" | "loved" | "recent" | "saved" | "tag" | "search";
+    kind: "trending" | "loved" | "recent" | "saved" | "tag" | "search" | "playlist";
+    playlist?: string;
+    name?: string;
     tag?: string;
   };
 
@@ -109,6 +120,11 @@
   let searchActive = false;
 
   let recent: Track[] = [];
+  let playlists: Playlist[] = readPlaylists();
+  let pickFor: Track | null = null;
+  let addOpen = false;
+  let newName = "";
+  let nameEl: HTMLInputElement | null = null;
   /** tracks in the library's Online folder — the disk is the source of truth */
   let saved: Track[] = [];
   let savingKey: string | null = null;
@@ -150,391 +166,445 @@
   $: title =
     collection.kind === "trending"
       ? "Trending now"
-      : collection.kind === "loved"
-        ? "Loved on Last.fm"
-        : collection.kind === "recent"
-          ? "Recently played"
-          : collection.kind === "saved"
-            ? "Saved"
-          : collection.kind === "tag"
-            ? `Station · ${collection.tag}`
-            : `Results for “${query.trim()}”`;
-
-  $: elapsed = Math.round(progress * (current?.duration ?? 0));
-  $: compact = collection.kind === "saved";
-  $: tableRows = compact ? rows : rows.slice(7);
-  $: tableBase = compact ? 0 : 7;
-  $: allSelected = compact && rows.length > 0 && selected.length === rows.length;
-  $: cachePct = currentCached ? 100 : totalBytes ? Math.min(100, (cachedBytes / totalBytes) * 100) : 0;
-  const mb = (b: number) => (b >= 1024 * 1024 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`);
-  /** Compare loosely: the file name has characters replaced on save, so exact
-      string equality would stop recognising a track as already saved. */
-  const loose = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "");
-  $: savedKeys = new Set(saved.map((t) => loose(`${t.artist}${t.title}`)));
-  /** Saved state as a *reactive* expression. Calling a plain function from the
-      template hid the dependency, so a finished save never repainted the button. */
-  const keyOf = (t: Track) => loose(`${t.artist}${t.title}`);
-  $: heroKept = !!hero && savedKeys.has(keyOf(hero));
-  $: barKept = !!current && savedKeys.has(keyOf(current));
-  const isSaved = (t: Track) => savedKeys.has(loose(`${t.artist}${t.title}`));
-
-  $: subtitle =
-    collection.kind === "trending"
-      ? "Global charts"
-      : collection.kind === "loved"
-        ? lfUser
-          ? `@${lfUser}`
-          : "Last.fm"
+      : collection.kind === "playlist"
+        ? (collection.name ?? "Playlist")
+    : collection.kind === "loved"
+      ? "Loved on Last.fm"
+      : collection.kind === "recent"
+        ? "Recently played"
         : collection.kind === "saved"
-          ? "Saved to your library"
-          : collection.kind === "recent"
-          ? "From this machine"
-          : collection.kind === "tag"
-            ? "Last.fm tag station"
-            : "Deezer search";
+          ? "Saved"
+        : collection.kind === "tag"
+          ? `Station · ${collection.tag}`
+          : `Results for “${query.trim()}”`;
 
-  /** A cover that fails to load (blocked by CSP, offline, expired) disappears
-      rather than leaving a broken square. */
-  function hideBroken(e: Event) {
-    const el = e.currentTarget as HTMLImageElement | null;
-    if (el) el.style.display = "none";
+$: elapsed = Math.round(progress * (current?.duration ?? 0));
+  $: compact = collection.kind === "saved" || collection.kind === "playlist";
+$: tableRows = compact ? rows : rows.slice(7);
+$: tableBase = compact ? 0 : 7;
+$: allSelected = compact && rows.length > 0 && selected.length === rows.length;
+$: cachePct = currentCached ? 100 : totalBytes ? Math.min(100, (cachedBytes / totalBytes) * 100) : 0;
+const mb = (b: number) => (b >= 1024 * 1024 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.round(b / 1024)} KB`);
+/** Compare loosely: the file name has characters replaced on save, so exact
+    string equality would stop recognising a track as already saved. */
+const loose = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "");
+$: savedKeys = new Set(saved.map((t) => loose(`${t.artist}${t.title}`)));
+/** Saved state as a *reactive* expression. Calling a plain function from the
+    template hid the dependency, so a finished save never repainted the button. */
+const keyOf = (t: Track) => loose(`${t.artist}${t.title}`);
+$: heroKept = !!hero && savedKeys.has(keyOf(hero));
+$: barKept = !!current && savedKeys.has(keyOf(current));
+const isSaved = (t: Track) => savedKeys.has(loose(`${t.artist}${t.title}`));
+
+$: subtitle =
+  collection.kind === "trending"
+    ? "Global charts"
+    : collection.kind === "loved"
+      ? lfUser
+        ? `@${lfUser}`
+        : "Last.fm"
+    : collection.kind === "playlist"
+          ? "Your playlist"
+        : collection.kind === "saved"
+        ? "Saved to your library"
+        : collection.kind === "recent"
+        ? "From this machine"
+        : collection.kind === "tag"
+          ? "Last.fm tag station"
+          : "Deezer search";
+
+/** A cover that fails to load (blocked by CSP, offline, expired) disappears
+    rather than leaving a broken square. */
+function hideBroken(e: Event) {
+  const el = e.currentTarget as HTMLImageElement | null;
+  if (el) el.style.display = "none";
+}
+
+const fmt = (s: number) => {
+  if (!s) return "—";
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+function readPrefs() {
+  try {
+    const c = JSON.parse(localStorage.getItem(LS_COVERS) ?? "{}");
+    if (c && typeof c === "object") covers = c;
+  } catch {
+    /* ignore */
   }
-
-  const fmt = (s: number) => {
-    if (!s) return "—";
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-  };
-
-  function readPrefs() {
-    try {
-      const c = JSON.parse(localStorage.getItem(LS_COVERS) ?? "{}");
-      if (c && typeof c === "object") covers = c;
-    } catch {
-      /* ignore */
-    }
-    try {
-      const p = JSON.parse(localStorage.getItem(LS_PREFS) ?? "{}");
-      lfUser = p.lastfmUser ?? "";
-    } catch {
-      /* ignore */
-    }
-    try {
-      const r = JSON.parse(localStorage.getItem(LS_RECENT) ?? "[]");
-      if (Array.isArray(r)) {
-        recent = r.slice(0, 40).map((t: Track, i: number) => ({
-          id: `recent:${i}`,
-          title: t.title,
-          artist: t.artist,
-          artwork: t.artwork ?? null,
-          duration: t.duration ?? 0,
-          source: "online", // old entries may point at files that no longer exist
-        }));
-      }
-    } catch {
-      /* ignore */
-    }
+  try {
+    const p = JSON.parse(localStorage.getItem(LS_PREFS) ?? "{}");
+    lfUser = p.lastfmUser ?? "";
+  } catch {
+    /* ignore */
   }
-
-  function clearRecent() {
-    recent = [];
-    try {
-      localStorage.removeItem(LS_RECENT);
-    } catch {
-      /* storage blocked: the list is already empty in memory */
+  try {
+    const r = JSON.parse(localStorage.getItem(LS_RECENT) ?? "[]");
+    if (Array.isArray(r)) {
+      recent = r.slice(0, 40).map((t: Track, i: number) => ({
+        id: `recent:${i}`,
+        title: t.title,
+        artist: t.artist,
+        artwork: t.artwork ?? null,
+        duration: t.duration ?? 0,
+        source: "online", // old entries may point at files that no longer exist
+      }));
     }
-    if (collection.kind === "recent") rows = [];
-    notice = "History cleared";
-    setTimeout(() => (notice = ""), 2500);
+  } catch {
+    /* ignore */
   }
+}
 
-  function remember(t: Track) {
-    const key = `${t.artist} — ${t.title}`;
-    // Remember what the track *is*, not where a copy happened to live: a saved
-    // file can be deleted later, and history should still be playable.
-    const entry: Track = {
-      id: `recent:${key}`,
-      title: t.title,
+function clearRecent() {
+  recent = [];
+  try {
+    localStorage.removeItem(LS_RECENT);
+  } catch {
+    /* storage blocked: the list is already empty in memory */
+  }
+  if (collection.kind === "recent") rows = [];
+  notice = "History cleared";
+  setTimeout(() => (notice = ""), 2500);
+}
+
+/** A playlist holds identities, so a track lives there with or without a save. */
+function playlistRows(id: string): Track[] {
+  const list = playlists.find((p) => p.id === id);
+  return (list?.tracks ?? []).map((t, i) => ({
+    id: `pl:${id}:${i}`,
+    title: t.title,
+    artist: t.artist,
+    artwork: t.artwork,
+    duration: t.duration,
+    source: t.source || "online",
+  }));
+}
+
+function savePlaylists(next: Playlist[]) {
+  playlists = next;
+  writePlaylists(next);
+  if (collection.kind === "playlist") rows = playlistRows(collection.playlist ?? "");
+}
+
+function openAdd(t: Track | null) {
+  pickFor = t;
+  newName = "";
+  addOpen = true;
+  queueMicrotask(() => nameEl?.focus());
+}
+
+function addTo(id: string, t: Track) {
+  savePlaylists(
+    withTrack(playlists, id, {
       artist: t.artist,
+      title: t.title,
       artwork: t.artwork,
       duration: t.duration,
-      source: "online",
-    };
-    recent = [entry, ...recent.filter((r) => `${r.artist} — ${r.title}` !== key)].slice(0, 40);
-    try {
-      localStorage.setItem(LS_RECENT, JSON.stringify(recent));
-    } catch {
-      /* storage full */
-    }
-  }
-
-  function failure(e: unknown): string {
-    const msg = String(e);
-    if (msg.includes("invoke") || msg.includes("__TAURI")) {
-      return "This is the browser preview. The player only runs inside Wagmify.";
-    }
-    return msg.replace(/^Error:\s*/, "");
-  }
-
-  async function open(c: Collection) {
-    collection = c;
-    searchActive = false;
-    clearError();
-    if (c.kind === "recent") {
-      rows = recent;
-      loading = false;
-      return;
-    }
-    if (c.kind === "saved") {
-      await refreshSaved();
-      rows = saved;
-      loading = false;
-      return;
-    }
-    if (c.kind === "loved" && (!lfKey || !lfUser)) {
-      rows = [];
-      loading = false;
-      fail(
-        "No Last.fm key yet.",
-        "Make an app at last.fm/api, then paste the key and your username in Settings.",
-        "settings",
-      );
-      return;
-    }
-    if (c.kind === "tag" && !lfKey) {
-      rows = [];
-      loading = false;
-      fail("Tag stations need Last.fm.", "Add your key in Settings.", "settings");
-      return;
-    }
-    if (!inTauri) {
-      rows = [];
-      loading = false;
-      return;
-    }
-    loading = true;
-    try {
-      rows =
-        c.kind === "trending"
-          ? await invoke<Track[]>("online_charts", { limit: 40 })
-          : c.kind === "loved"
-            ? await invoke<Track[]>("online_loved", { user: lfUser, apiKey: lfKey })
-            : await invoke<Track[]>("online_tag", { tag: c.tag, apiKey: lfKey });
-      if (!rows.length) {
-        fail("Nothing came back for that.", "The list is private, or you haven't loved anything yet.");
-      }
-    } catch (e) {
-      error = failure(e);
-      rows = [];
-    } finally {
-      loading = false;
-    }
-  }
-
-  async function runSearch() {
-    const q = query.trim();
-    if (!q) return closeSearch();
-    if (!inTauri) return;
-    loading = true;
-    clearError();
-    searchActive = true;
-    try {
-      rows = await invoke<Track[]>("online_search", { query: q, limit: 40 });
-      if (!rows.length) {
-        fail("No match for that.", "Try a shorter search.");
-      }
-    } catch (e) {
-      error = failure(e);
-      rows = [];
-    } finally {
-      loading = false;
-    }
-  }
-
-  async function closeSearch() {
-    query = "";
-    searchActive = false;
-    await open(collection);
-  }
-
-  async function play(index: number, fromQueue?: Track[]) {
-    const list = fromQueue ?? rows;
-    const track = list[index];
-    if (!track) return;
-    queue = [...list];
-    qIndex = index;
-    await startTrack(track);
-  }
-
-  async function playAll(shuffled = false) {
-    if (!rows.length) return;
-    const list = [...rows];
-    if (shuffled) {
-      for (let i = list.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [list[i], list[j]] = [list[j], list[i]];
-      }
-    }
-    await play(0, list);
-  }
-
-  /** Stop whatever Online is playing, without touching the queue. */
-  async function stopVoice() {
-    if (voiceId === null) return;
-    const id = voiceId;
-    voiceId = null;
-    try {
-      await invoke("stop_voice", { id });
-    } catch {
-      /* already gone */
-    }
-  }
-
-  /** Play `t`. The track is passed in rather than read from `current`: a derived
-      value lags one flush behind the assignment that triggered it, and reading it
-      here played the *previously* selected track instead of the clicked one.
-
-      Online is a player, not a soundboard: clicking five rows must leave exactly
-      one voice. Clicks that arrive while a track is still resolving are folded
-      into a single "latest wins" request, so they cost one resolve and no extra
-      bandwidth — and a resolve that finishes after a newer request is discarded
-      instead of starting a second stream. */
-  async function startTrack(t: Track) {
-    if (starting) {
-      requested = t;
-      return;
-    }
-    const mine = ++seq;
-    starting = true;
-    paused = false;
-    progress = 0;
-    currentCached = false;
-    cachedBytes = 0;
-    totalBytes = 0;
-    try {
-      await stopVoice();
-      if (mine !== seq) return;
-      remember(t);
-      // a saved track is a file on this machine: no network at all — unless the
-      // file has been deleted since, in which case fall back to streaming
-      let v: { id?: number } = {};
-      let local = t.source === "saved" && !!t.path;
-      if (local) {
-        try {
-          const r = await invoke<{ id?: number } | number>("play_sound", {
-            path: t.path,
-            route: "both",
-            retrigger: "choke",
-          });
-          v = typeof r === "number" ? { id: r } : r;
-        } catch {
-          local = false; // the file is gone: forget the path and stream it
-        }
-      }
-      if (!local) {
-        v = await invoke<{ id: number }>("play_online", {
-          artist: t.artist,
-          title: t.title,
-          duration: t.duration,
-        });
-      }
-      if (mine !== seq) {
-        // a newer click or a stop happened while this one was resolving
-        if (typeof v.id === "number") {
-          try {
-            await invoke("stop_voice", { id: v.id });
-          } catch {
-            /* already gone */
-          }
-        }
-        return;
-      }
-      if (typeof v.id === "number") voiceId = v.id;
-      clearError();
-    } catch (e) {
-      if (mine === seq) {
-        error = failure(e);
-        voiceId = null;
-      }
-    } finally {
-      starting = false;
-      const queued = requested;
-      requested = null;
-      if (queued && mine === seq) await startTrack(queued);
-    }
-  }
-
-  async function next() {
-    if (qIndex + 1 >= queue.length) {
-      if (repeat && queue.length) {
-        qIndex = 0;
-        const first = queue[0];
-        if (first) return void startTrack(first);
-      }
-      return stop();
-    }
-    qIndex += 1;
-    const nextTrack = queue[qIndex];
-    if (!nextTrack) return;
-    await startTrack(nextTrack);
-  }
-
-  async function prev() {
-    if (qIndex <= 0) return;
-    qIndex -= 1;
-    const prevTrack = queue[qIndex];
-    if (!prevTrack) return;
-    await startTrack(prevTrack);
-  }
-
-  // Discord only needs the headline facts, and only when they change.
-  $: onNowPlaying(
-    current
-      ? {
-          title: current.title,
-          artist: current.artist ?? "",
-          started: paused ? null : startedAt,
-          ends: paused ? null : endsAt,
-          artwork: current.artwork,
-          paused,
-          id: voiceId,
-          saved: savedKeys.has(keyOf(current)),
-        }
-      : null,
+      source: t.source,
+    }),
   );
+  const name = playlists.find((p) => p.id === id)?.name ?? "playlist";
+  pickFor = null;
+  addOpen = false;
+  notice = `Added to ${name}`;
+  setTimeout(() => (notice = ""), 2400);
+}
 
-  /** Pause keeps the position: the voice stays in the engine, silent. */
-  async function togglePause() {
-    if (voiceId === null) return;
-    paused = !paused;
-    try {
-      await invoke("pause_voice", { id: voiceId, paused });
-    } catch {
-      paused = !paused; // put the UI back if the engine refused
+function makePlaylist() {
+  const made = newPlaylist(newName);
+  const track = pickFor;
+  newName = "";
+  savePlaylists([...playlists, made]);
+  if (track) addTo(made.id, track);
+  else void open({ kind: "playlist", playlist: made.id, name: made.name });
+}
+
+function dropPlaylist(id: string) {
+  savePlaylists(playlists.filter((p) => p.id !== id));
+  if (collection.kind === "playlist" && collection.playlist === id) void open({ kind: "trending" });
+}
+
+function removeFromPlaylist(t: Track) {
+  if (collection.kind !== "playlist" || !collection.playlist) return;
+  savePlaylists(withoutTrack(playlists, collection.playlist, t));
+  notice = "Removed from playlist";
+  setTimeout(() => (notice = ""), 2000);
+}
+
+function remember(t: Track) {
+  const key = `${t.artist} — ${t.title}`;
+  // Remember what the track *is*, not where a copy happened to live: a saved
+  // file can be deleted later, and history should still be playable.
+  const entry: Track = {
+    id: `recent:${key}`,
+    title: t.title,
+    artist: t.artist,
+    artwork: t.artwork,
+    duration: t.duration,
+    source: "online",
+  };
+  recent = [entry, ...recent.filter((r) => `${r.artist} — ${r.title}` !== key)].slice(0, 40);
+  try {
+    localStorage.setItem(LS_RECENT, JSON.stringify(recent));
+  } catch {
+    /* storage full */
+  }
+}
+
+function failure(e: unknown): string {
+  const msg = String(e);
+  if (msg.includes("invoke") || msg.includes("__TAURI")) {
+    return "This is the browser preview. The player only runs inside Wagmify.";
+  }
+  return msg.replace(/^Error:\s*/, "");
+}
+
+async function open(c: Collection) {
+  collection = c;
+  searchActive = false;
+  clearError();
+  if (c.kind === "recent") {
+    rows = recent;
+    loading = false;
+    return;
+  }
+  if (c.kind === "saved") {
+    await refreshSaved();
+    rows = saved;
+    loading = false;
+    return;
+  }
+  if (c.kind === "playlist") {
+    rows = playlistRows(c.playlist ?? "");
+    loading = false;
+    return;
+  }
+  if (c.kind === "loved" && (!lfKey || !lfUser)) {
+    rows = [];
+    loading = false;
+    fail(
+      "No Last.fm key yet.",
+      "Make an app at last.fm/api, then paste the key and your username in Settings.",
+      "settings",
+    );
+    return;
+  }
+  if (c.kind === "tag" && !lfKey) {
+    rows = [];
+    loading = false;
+    fail("Tag stations need Last.fm.", "Add your key in Settings.", "settings");
+    return;
+  }
+  if (!inTauri) {
+    rows = [];
+    loading = false;
+    return;
+  }
+  loading = true;
+  try {
+    rows =
+      c.kind === "trending"
+        ? await invoke<Track[]>("online_charts", { limit: 40 })
+        : c.kind === "loved"
+          ? await invoke<Track[]>("online_loved", { user: lfUser, apiKey: lfKey })
+          : await invoke<Track[]>("online_tag", { tag: c.tag, apiKey: lfKey });
+    if (!rows.length) {
+      fail("Nothing came back for that.", "The list is private, or you haven't loved anything yet.");
+    }
+  } catch (e) {
+    error = failure(e);
+    rows = [];
+  } finally {
+    loading = false;
+  }
+}
+
+async function runSearch() {
+  const q = query.trim();
+  if (!q) return closeSearch();
+  if (!inTauri) return;
+  loading = true;
+  clearError();
+  searchActive = true;
+  try {
+    rows = await invoke<Track[]>("online_search", { query: q, limit: 40 });
+    if (!rows.length) {
+      fail("No match for that.", "Try a shorter search.");
+    }
+  } catch (e) {
+    error = failure(e);
+    rows = [];
+  } finally {
+    loading = false;
+  }
+}
+
+async function closeSearch() {
+  query = "";
+  searchActive = false;
+  await open(collection);
+}
+
+async function play(index: number, fromQueue?: Track[]) {
+  const list = fromQueue ?? rows;
+  const track = list[index];
+  if (!track) return;
+  queue = [...list];
+  qIndex = index;
+  await startTrack(track);
+}
+
+async function playAll(shuffled = false) {
+  if (!rows.length) return;
+  const list = [...rows];
+  if (shuffled) {
+    for (let i = list.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [list[i], list[j]] = [list[j], list[i]];
     }
   }
+  await play(0, list);
+}
 
-    /** Jump to a fraction of the track, whatever the caller knows about events. */
-    async function seekTo(f: number) {
-      if (voiceId === null || !current) return;
-      progress = f;
-      const now = Math.floor(Date.now() / 1000);
-      if (current.duration > 0) {
-        startedAt = now;
-        endsAt = now + Math.round(current.duration * (1 - f));
-      }
+/** Stop whatever Online is playing, without touching the queue. */
+async function stopVoice() {
+  if (voiceId === null) return;
+  const id = voiceId;
+  voiceId = null;
+  try {
+    await invoke("stop_voice", { id });
+  } catch {
+    /* already gone */
+  }
+}
+
+/** Play `t`. The track is passed in rather than read from `current`: a derived
+    value lags one flush behind the assignment that triggered it, and reading it
+    here played the *previously* selected track instead of the clicked one.
+
+    Online is a player, not a soundboard: clicking five rows must leave exactly
+    one voice. Clicks that arrive while a track is still resolving are folded
+    into a single "latest wins" request, so they cost one resolve and no extra
+    bandwidth — and a resolve that finishes after a newer request is discarded
+    instead of starting a second stream. */
+async function startTrack(t: Track) {
+  if (starting) {
+    requested = t;
+    return;
+  }
+  const mine = ++seq;
+  starting = true;
+  paused = false;
+  progress = 0;
+  currentCached = false;
+  cachedBytes = 0;
+  totalBytes = 0;
+  try {
+    await stopVoice();
+    if (mine !== seq) return;
+    remember(t);
+    // a saved track is a file on this machine: no network at all — unless the
+    // file has been deleted since, in which case fall back to streaming
+    let v: { id?: number } = {};
+    let local = t.source === "saved" && !!t.path;
+    if (local) {
       try {
-        await invoke("seek_voice", { id: voiceId, position: f });
+        const r = await invoke<{ id?: number } | number>("play_sound", {
+          path: t.path,
+          route: "both",
+          retrigger: "choke",
+        });
+        v = typeof r === "number" ? { id: r } : r;
       } catch {
-        /* engine busy; the poll will resync */
+        local = false; // the file is gone: forget the path and stream it
       }
     }
+    if (!local) {
+      v = await invoke<{ id: number }>("play_online", {
+        artist: t.artist,
+        title: t.title,
+        duration: t.duration,
+      });
+    }
+    if (mine !== seq) {
+      // a newer click or a stop happened while this one was resolving
+      if (typeof v.id === "number") {
+        try {
+          await invoke("stop_voice", { id: v.id });
+        } catch {
+          /* already gone */
+        }
+      }
+      return;
+    }
+    if (typeof v.id === "number") voiceId = v.id;
+    clearError();
+  } catch (e) {
+    if (mine === seq) {
+      error = failure(e);
+      voiceId = null;
+    }
+  } finally {
+    starting = false;
+    const queued = requested;
+    requested = null;
+    if (queued && mine === seq) await startTrack(queued);
+  }
+}
 
-  /** Click anywhere on the progress line to jump there. */
-  async function seekAt(ev: MouseEvent) {
+async function next() {
+  if (qIndex + 1 >= queue.length) {
+    if (repeat && queue.length) {
+      qIndex = 0;
+      const first = queue[0];
+      if (first) return void startTrack(first);
+    }
+    return stop();
+  }
+  qIndex += 1;
+  const nextTrack = queue[qIndex];
+  if (!nextTrack) return;
+  await startTrack(nextTrack);
+}
+
+async function prev() {
+  if (qIndex <= 0) return;
+  qIndex -= 1;
+  const prevTrack = queue[qIndex];
+  if (!prevTrack) return;
+  await startTrack(prevTrack);
+}
+
+// Discord only needs the headline facts, and only when they change.
+$: onNowPlaying(
+  current
+    ? {
+        title: current.title,
+        artist: current.artist ?? "",
+        started: paused ? null : startedAt,
+        ends: paused ? null : endsAt,
+        artwork: current.artwork,
+        paused,
+        id: voiceId,
+        saved: savedKeys.has(keyOf(current)),
+      }
+    : null,
+);
+
+/** Pause keeps the position: the voice stays in the engine, silent. */
+async function togglePause() {
+  if (voiceId === null) return;
+  paused = !paused;
+  try {
+    await invoke("pause_voice", { id: voiceId, paused });
+  } catch {
+    paused = !paused; // put the UI back if the engine refused
+  }
+}
+
+  /** Jump to a fraction of the track, whatever the caller knows about events. */
+  async function seekTo(f: number) {
     if (voiceId === null || !current) return;
-    const el = ev.currentTarget as HTMLElement;
-    const rect = el.getBoundingClientRect();
-    const f = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
     progress = f;
     const now = Math.floor(Date.now() / 1000);
     if (current.duration > 0) {
@@ -548,271 +618,310 @@
     }
   }
 
-  async function stop() {
-    paused = false;
-    seq += 1; // any resolve still in flight is stale now
-    requested = null;
-    await stopVoice();
-    queue = [];
-    qIndex = -1;
+/** Click anywhere on the progress line to jump there. */
+async function seekAt(ev: MouseEvent) {
+  if (voiceId === null || !current) return;
+  const el = ev.currentTarget as HTMLElement;
+  const rect = el.getBoundingClientRect();
+  const f = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+  progress = f;
+  const now = Math.floor(Date.now() / 1000);
+  if (current.duration > 0) {
+    startedAt = now;
+    endsAt = now + Math.round(current.duration * (1 - f));
   }
+  try {
+    await invoke("seek_voice", { id: voiceId, position: f });
+  } catch {
+    /* engine busy; the poll will resync */
+  }
+}
 
-  /** Download a row into the library, so it is instant and offline from now on. */
-  async function save(t: Track) {
-    if (savingKey || isSaved(t)) return;
-    const key = `${t.artist}\u0000${t.title}`;
-    savingKey = key;
-    clearError();
+async function stop() {
+  paused = false;
+  seq += 1; // any resolve still in flight is stale now
+  requested = null;
+  await stopVoice();
+  queue = [];
+  qIndex = -1;
+}
+
+/** Download a row into the library, so it is instant and offline from now on. */
+async function save(t: Track) {
+  if (savingKey || isSaved(t)) return;
+  const key = `${t.artist}\u0000${t.title}`;
+  savingKey = key;
+  clearError();
+  try {
+    const got = await invoke<{ path: string; duration_secs: number }>("save_online", {
+      artist: t.artist,
+      title: t.title,
+      duration: t.duration,
+      job: `save-${Date.now()}`,
+    });
+    const entry: Track = {
+      id: `saved:${got.path}`,
+      title: t.title,
+      artist: t.artist,
+      artwork: t.artwork,
+      duration: Math.round(got.duration_secs) || t.duration,
+      source: "saved",
+      path: got.path,
+    };
+    saved = [entry, ...saved.filter((s) => `${s.artist}\u0000${s.title}` !== key)];
+    await refreshSaved();
+    notice = `Saved to your library · ${t.artist} — ${t.title}`;
+    onChanged();
+    setTimeout(() => (notice = ""), 3000);
+  } catch (e) {
+    error = failure(e);
+  } finally {
+    savingKey = null;
+  }
+}
+
+const trackKey = (t: Track) => `${t.artist}\u0000${t.title}`;
+
+/** Re-read the Online folder after anything that might have changed it. */
+async function refreshSaved() {
+  if (!inTauri) return;
+  try {
+    const list = await invoke<
+      {
+        path: string;
+        artist: string;
+        title: string;
+        duration?: number;
+        artwork?: string | null;
+      }[]
+    >("online_saved");
+    saved = list.map((t, i) => ({
+      id: `saved:${t.path || i}`,
+      title: t.title,
+      artist: t.artist,
+      // the file's own sidecar first; the local map is only a fallback for
+      // saves made before covers were written next to the audio
+      artwork: t.artwork ?? covers[`${loose(t.artist)}|${loose(t.title)}`] ?? null,
+      duration: t.duration ?? 0,
+      source: "saved",
+      path: t.path,
+    }));
+    await fillMissingCovers();
+  } catch {
+    /* keep what we have */
+  }
+}
+
+/** Saves made before covers were stored beside the file get one lookup each
+    (cached locally), so the Saved list never shows a wall of blank tiles. */
+async function fillMissingCovers() {
+  if (!inTauri) return;
+  let looked = 0;
+  let changed = false;
+  const next = [...saved];
+  for (let i = 0; i < next.length && looked < 12; i++) {
+    const t = next[i];
+    if (t.artwork && !t.legacy) continue;
+    looked += 1;
     try {
-      const got = await invoke<{ path: string; duration_secs: number }>("save_online", {
-        artist: t.artist,
-        title: t.title,
-        duration: t.duration,
-        job: `save-${Date.now()}`,
-      });
-      const entry: Track = {
-        id: `saved:${got.path}`,
-        title: t.title,
-        artist: t.artist,
-        artwork: t.artwork,
-        duration: Math.round(got.duration_secs) || t.duration,
-        source: "saved",
-        path: got.path,
+      const hit = await invoke<{
+        artist: string;
+        title: string;
+        artwork: string | null;
+      } | null>("online_lookup", { artist: t.artist, title: t.title });
+      if (!hit) continue;
+      // for pre-sidecar files this also fixes a title/artist swap
+      next[i] = {
+        ...t,
+        artist: t.legacy ? hit.artist : t.artist,
+        title: t.legacy ? hit.title : t.title,
+        artwork: t.artwork ?? hit.artwork,
+        legacy: false,
       };
-      saved = [entry, ...saved.filter((s) => `${s.artist}\u0000${s.title}` !== key)];
-      await refreshSaved();
-      notice = `Saved to your library · ${t.artist} — ${t.title}`;
-      onChanged();
-      setTimeout(() => (notice = ""), 3000);
+      if (hit.artwork) covers[`${loose(hit.artist)}|${loose(hit.title)}`] = hit.artwork;
+      changed = true;
+    } catch {
+      /* offline: leave the glyph */
+    }
+  }
+  if (changed) {
+    saved = next;
+    if (collection.kind === "saved") rows = saved;
+    try {
+      localStorage.setItem(LS_COVERS, JSON.stringify(covers));
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function toggleSelect(t: Track) {
+  const k = trackKey(t);
+  selected = selected.includes(k) ? selected.filter((x) => x !== k) : [...selected, k];
+}
+
+function toggleSelectAll() {
+  selected = allSelected ? [] : rows.map(trackKey);
+}
+
+/** Ask before deleting: this removes real files. */
+function askDelete(list: Track[]) {
+  if (!list.length) return;
+  pendingDelete = list;
+}
+
+async function confirmDelete() {
+  const list = pendingDelete ?? [];
+  pendingDelete = null;
+  selected = [];
+  let removed = 0;
+  for (const t of list) {
+    if (await removeSaved(t)) removed += 1;
+  }
+  await refreshSaved();
+  if (collection.kind === "saved") rows = saved;
+  if (removed) {
+    notice = removed === 1 ? "Removed from your library" : `Removed ${removed} tracks`;
+    onChanged(); // let the Library view rescan
+    setTimeout(() => (notice = ""), 2600);
+  }
+}
+
+async function removeSaved(t: Track): Promise<boolean> {
+  const key = trackKey(t);
+  const entry = saved.find((s) => trackKey(s) === key);
+  const path = t.path ?? entry?.path;
+  if (!path) {
+    error = "Don't know which file to delete. Rescan the saved list.";
+    return false;
+  }
+  if (path) {
+    try {
+      await invoke("unsave_online", { path });
     } catch (e) {
       error = failure(e);
-    } finally {
-      savingKey = null;
-    }
-  }
-
-  const trackKey = (t: Track) => `${t.artist}\u0000${t.title}`;
-
-  /** Re-read the Online folder after anything that might have changed it. */
-  async function refreshSaved() {
-    if (!inTauri) return;
-    try {
-      const list = await invoke<
-        {
-          path: string;
-          artist: string;
-          title: string;
-          duration?: number;
-          artwork?: string | null;
-        }[]
-      >("online_saved");
-      saved = list.map((t, i) => ({
-        id: `saved:${t.path || i}`,
-        title: t.title,
-        artist: t.artist,
-        // the file's own sidecar first; the local map is only a fallback for
-        // saves made before covers were written next to the audio
-        artwork: t.artwork ?? covers[`${loose(t.artist)}|${loose(t.title)}`] ?? null,
-        duration: t.duration ?? 0,
-        source: "saved",
-        path: t.path,
-      }));
-      await fillMissingCovers();
-    } catch {
-      /* keep what we have */
-    }
-  }
-
-  /** Saves made before covers were stored beside the file get one lookup each
-      (cached locally), so the Saved list never shows a wall of blank tiles. */
-  async function fillMissingCovers() {
-    if (!inTauri) return;
-    let looked = 0;
-    let changed = false;
-    const next = [...saved];
-    for (let i = 0; i < next.length && looked < 12; i++) {
-      const t = next[i];
-      if (t.artwork && !t.legacy) continue;
-      looked += 1;
-      try {
-        const hit = await invoke<{
-          artist: string;
-          title: string;
-          artwork: string | null;
-        } | null>("online_lookup", { artist: t.artist, title: t.title });
-        if (!hit) continue;
-        // for pre-sidecar files this also fixes a title/artist swap
-        next[i] = {
-          ...t,
-          artist: t.legacy ? hit.artist : t.artist,
-          title: t.legacy ? hit.title : t.title,
-          artwork: t.artwork ?? hit.artwork,
-          legacy: false,
-        };
-        if (hit.artwork) covers[`${loose(hit.artist)}|${loose(hit.title)}`] = hit.artwork;
-        changed = true;
-      } catch {
-        /* offline: leave the glyph */
-      }
-    }
-    if (changed) {
-      saved = next;
-      if (collection.kind === "saved") rows = saved;
-      try {
-        localStorage.setItem(LS_COVERS, JSON.stringify(covers));
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-
-  function toggleSelect(t: Track) {
-    const k = trackKey(t);
-    selected = selected.includes(k) ? selected.filter((x) => x !== k) : [...selected, k];
-  }
-
-  function toggleSelectAll() {
-    selected = allSelected ? [] : rows.map(trackKey);
-  }
-
-  /** Ask before deleting: this removes real files. */
-  function askDelete(list: Track[]) {
-    if (!list.length) return;
-    pendingDelete = list;
-  }
-
-  async function confirmDelete() {
-    const list = pendingDelete ?? [];
-    pendingDelete = null;
-    selected = [];
-    let removed = 0;
-    for (const t of list) {
-      if (await removeSaved(t)) removed += 1;
-    }
-    await refreshSaved();
-    if (collection.kind === "saved") rows = saved;
-    if (removed) {
-      notice = removed === 1 ? "Removed from your library" : `Removed ${removed} tracks`;
-      onChanged(); // let the Library view rescan
-      setTimeout(() => (notice = ""), 2600);
-    }
-  }
-
-  async function removeSaved(t: Track): Promise<boolean> {
-    const key = trackKey(t);
-    const entry = saved.find((s) => trackKey(s) === key);
-    const path = t.path ?? entry?.path;
-    if (!path) {
-      error = "Don't know which file to delete. Rescan the saved list.";
       return false;
     }
-    if (path) {
-      try {
-        await invoke("unsave_online", { path });
-      } catch (e) {
-        error = failure(e);
-        return false;
+  }
+  // it was playing from that file: stop rather than leave a dangling voice
+  if (current?.id === t.id) await stop();
+  selected = selected.filter((x) => x !== key);
+  return true;
+}
+
+/** A track is finished when its voice disappears from the engine. */
+function watch() {
+  poll = setInterval(async () => {
+    if (voiceId === null || starting) return;
+    try {
+      const voices = await invoke<{ id: number; progress: number }[]>("active_voices");
+      const mine = voices.find((v) => v.id === voiceId);
+      if (!mine) {
+        voiceId = null;
+        progress = 0;
+        await next();
+      } else if (!paused) {
+        progress = mine.progress ?? 0;
       }
+      if (current) {
+        try {
+          const st = await invoke<{
+            cached: number;
+            total: number;
+            complete: boolean;
+          }>("online_cache_state", { artist: current.artist, title: current.title });
+          cachedBytes = st.cached;
+          totalBytes = st.total;
+          currentCached = st.complete;
+        } catch {
+          /* keep the previous state */
+        }
+      }
+    } catch {
+      /* engine busy; try again next tick */
     }
-    // it was playing from that file: stop rather than leave a dangling voice
-    if (current?.id === t.id) await stop();
-    selected = selected.filter((x) => x !== key);
-    return true;
-  }
+  }, 700);
+}
 
-  /** A track is finished when its voice disappears from the engine. */
-  function watch() {
-    poll = setInterval(async () => {
-      if (voiceId === null || starting) return;
-      try {
-        const voices = await invoke<{ id: number; progress: number }[]>("active_voices");
-        const mine = voices.find((v) => v.id === voiceId);
-        if (!mine) {
-          voiceId = null;
-          progress = 0;
-          await next();
-        } else if (!paused) {
-          progress = mine.progress ?? 0;
-        }
-        if (current) {
-          try {
-            const st = await invoke<{
-              cached: number;
-              total: number;
-              complete: boolean;
-            }>("online_cache_state", { artist: current.artist, title: current.title });
-            cachedBytes = st.cached;
-            totalBytes = st.total;
-            currentCached = st.complete;
-          } catch {
-            /* keep the previous state */
-          }
-        }
-      } catch {
-        /* engine busy; try again next tick */
+onMount(() => {
+  readPrefs();
+  onApi({ toggle: togglePause, stop, seek: seekTo });
+  // credentials come from the backend's private store
+  invoke<string | null>("secret_get", { name: "lastfm.key" })
+    .then((k) => {
+      lfKey = k ?? "";
+      // a loved/tag view opened before the key arrived needs a retry
+      if (lfKey && (collection.kind === "loved" || collection.kind === "tag")) {
+        void open(collection);
       }
-    }, 700);
-  }
+    })
+    .catch(() => {});
+  void refreshSaved();
+  void open(collection);
+  watch();
+});
 
-  onMount(() => {
-    readPrefs();
-    onApi({ toggle: togglePause, stop, seek: seekTo });
-    // credentials come from the backend's private store
-    invoke<string | null>("secret_get", { name: "lastfm.key" })
-      .then((k) => {
-        lfKey = k ?? "";
-        // a loved/tag view opened before the key arrived needs a retry
-        if (lfKey && (collection.kind === "loved" || collection.kind === "tag")) {
-          void open(collection);
-        }
-      })
-      .catch(() => {});
-    void refreshSaved();
-    void open(collection);
-    watch();
-  });
-
-  onDestroy(() => {
-    if (poll) clearInterval(poll);
-  });
+onDestroy(() => {
+  if (poll) clearInterval(poll);
+});
 </script>
 
 <div class="online">
-  <!-- ---------------- playlists ---------------- -->
-  <aside class="rail">
+<!-- ---------------- playlists ---------------- -->
+<aside class="rail">
+  <div class="rail-group">
+    <span class="rail-label">Playlists</span>
+    <button
+      class="rail-item"
+      class:on={!searchActive && collection.kind === "trending"}
+      onclick={() => void open({ kind: "trending" })}
+    >
+      <RefreshCw size={13} /> Trending now
+    </button>
+    <button
+      class="rail-item"
+      class:on={!searchActive && collection.kind === "loved"}
+      onclick={() => void open({ kind: "loved" })}
+    >
+      <Heart size={13} /> Loved
+    </button>
+    <button
+      class="rail-item"
+      class:on={!searchActive && collection.kind === "saved"}
+      onclick={() => void open({ kind: "saved" })}
+    >
+      <Download size={13} /> Saved
+      {#if saved.length}<span class="count">{saved.length}</span>{/if}
+    </button>
+    <button
+      class="rail-item"
+      class:on={!searchActive && collection.kind === "recent"}
+      onclick={() => void open({ kind: "recent" })}
+    >
+      <History size={13} /> Recently played
+      {#if recent.length}<span class="count">{recent.length}</span>{/if}
+    </button>
+  </div>
+
     <div class="rail-group">
-      <span class="rail-label">Playlists</span>
-      <button
-        class="rail-item"
-        class:on={!searchActive && collection.kind === "trending"}
-        onclick={() => void open({ kind: "trending" })}
-      >
-        <RefreshCw size={13} /> Trending now
-      </button>
-      <button
-        class="rail-item"
-        class:on={!searchActive && collection.kind === "loved"}
-        onclick={() => void open({ kind: "loved" })}
-      >
-        <Heart size={13} /> Loved
-      </button>
-      <button
-        class="rail-item"
-        class:on={!searchActive && collection.kind === "saved"}
-        onclick={() => void open({ kind: "saved" })}
-      >
-        <Download size={13} /> Saved
-        {#if saved.length}<span class="count">{saved.length}</span>{/if}
-      </button>
-      <button
-        class="rail-item"
-        class:on={!searchActive && collection.kind === "recent"}
-        onclick={() => void open({ kind: "recent" })}
-      >
-        <History size={13} /> Recently played
-        {#if recent.length}<span class="count">{recent.length}</span>{/if}
-      </button>
-    </div>
+      <span class="rail-label">
+        Your playlists
+        <button class="rail-add" onclick={() => openAdd(null)} title="New playlist">+</button>
+      </span>
+      {#if !playlists.length}
+        <p class="rail-empty">Group tracks you like, saved or not.</p>
+      {/if}
+        {#each playlists as pl (pl.id)}
+          <button
+            class="rail-item"
+            class:on={!searchActive && collection.kind === "playlist" && collection.playlist === pl.id}
+            onclick={() => void open({ kind: "playlist", playlist: pl.id, name: pl.name })}
+          >
+            <ListMusic size={13} /> {pl.name}
+            {#if pl.tracks.length}<span class="count">{pl.tracks.length}</span>{/if}
+          </button>
+        {/each}
+      </div>
 
     <div class="rail-group">
       <span class="rail-label">Stations</span>
@@ -893,6 +1002,15 @@
           {#if collection.kind === "recent"}
             <button class="ghost" onclick={clearRecent} title="Forget what has been played">
               <Trash2 size={13} /> Clear
+            </button>
+          {/if}
+          {#if collection.kind === "playlist"}
+            <button
+              class="ghost"
+              onclick={() => dropPlaylist(collection.playlist!)}
+              title="Delete this playlist"
+            >
+              <Trash2 size={13} /> Delete
             </button>
           {/if}
         </div>
@@ -1000,30 +1118,34 @@
               </span>
               <span class="c-dur">{fmt(t.duration)}</span>
               <span class="c-act">
-                  {#if kept}
-                    <button
-                      class="row-save"
-                      onclick={() => askDelete([t])}
-                      title="Remove from your library"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  {:else}
-                    <button
-                      class="row-save"
-                      onclick={() => void save(t)}
-                      disabled={savingKey === `${t.artist}\u0000${t.title}`}
-                      title={current?.id === t.id && currentCached
-                        ? "Cached, so saving is instant"
-                        : "Save to your library"}
-                    >
-                      {#if savingKey === `${t.artist}\u0000${t.title}`}
-                        <span class="dot-busy"></span>
-                      {:else}
-                        <Download size={12} />
-                      {/if}
-                    </button>
-                  {/if}
+                {#if collection.kind === "playlist"}
+                  <button class="row-save" onclick={() => removeFromPlaylist(t)} title="Remove from this playlist">
+                    <X size={12} />
+                  </button>
+                {/if}
+                <button class="row-save always" onclick={() => openAdd(t)} title="Add to a playlist">
+                  <ListPlus size={12} />
+                </button>
+                {#if kept && collection.kind !== "playlist"}
+                  <button class="row-save" onclick={() => askDelete([t])} title="Remove from your library">
+                    <Trash2 size={12} />
+                  </button>
+                {:else if !kept}
+                  <button
+                    class="row-save"
+                    onclick={() => void save(t)}
+                    disabled={savingKey === `${t.artist}\u0000${t.title}`}
+                    title={current?.id === t.id && currentCached
+                      ? "Cached, so saving is instant"
+                      : "Save to your library"}
+                  >
+                    {#if savingKey === `${t.artist}\u0000${t.title}`}
+                      <span class="dot-busy"></span>
+                    {:else}
+                      <Download size={12} />
+                    {/if}
+                  </button>
+                {/if}
                 <button
                   class="row-play"
                   onclick={() => (current?.id === t.id ? void togglePause() : void play(i + tableBase))}
@@ -1043,6 +1165,48 @@
       </div>
     {/if}
   </main>
+
+  {#if addOpen}
+    <div
+      class="scrim"
+      role="presentation"
+      onclick={(e) => e.target === e.currentTarget && (addOpen = false)}
+    >
+      <div class="dialog" role="dialog" aria-modal="true" tabindex="-1">
+        <h3>{pickFor ? "Add to a playlist" : "New playlist"}</h3>
+        {#if pickFor}
+          <p class="dlg-body">{pickFor.artist} · {pickFor.title}</p>
+          {#if playlists.length}
+            <ul class="pl-list">
+              {#each playlists as pl (pl.id)}
+                <li>
+                  <button class="pl-pick" onclick={() => addTo(pl.id, pickFor as Track)}>
+                    <ListMusic size={13} /> {pl.name}
+                    <span class="count">{pl.tracks.length}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        {/if}
+        <form
+          class="pl-new"
+          onsubmit={(e) => {
+            e.preventDefault();
+            makePlaylist();
+          }}
+        >
+          <input placeholder="Playlist name" bind:value={newName} maxlength="60" bind:this={nameEl} />
+          <button class="primary" type="submit" disabled={!newName.trim()}>
+            {pickFor ? "Create and add" : "Create"}
+          </button>
+        </form>
+        <div class="dlg-acts">
+          <button class="ghost" onclick={() => (addOpen = false)}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   {#if pendingDelete}
     <div class="scrim">
@@ -1141,6 +1305,13 @@
       </div>
 
       <div class="now-side">
+        <button
+          class="now-pl"
+          onclick={() => openAdd(current)}
+          title="Add this track to a playlist"
+        >
+          <ListPlus size={12} />
+        </button>
         {#if !barKept && current.source !== "saved"}
           <button
             class="now-save"
@@ -1480,7 +1651,7 @@
   .table { display: flex; flex-direction: column; }
   .thead, .trow {
     display: grid;
-    grid-template-columns: 26px 1fr 52px 34px;
+    grid-template-columns: 26px minmax(0, 1fr) 52px auto;
     align-items: center;
     gap: 12px;
   }
@@ -1499,7 +1670,8 @@
   .c-num { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; text-align: right; }
   .c-ttl { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .c-dur { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; text-align: right; }
-  .c-act { display: flex; justify-content: flex-end; }
+  /* room for two or three row actions; it grows instead of overlapping the time */
+  .c-act { display: flex; justify-content: flex-end; align-items: center; gap: 2px; }
   .thumb {
     width: 32px;
     height: 32px;
@@ -1529,6 +1701,10 @@
   }
   .trow:hover .row-save { opacity: 1; }
   .row-save:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--line, rgb(255 255 255 / 0.1)); }
+  /* always faintly there: finding playlists should not require hovering rows */
+  .row-save.always { opacity: 0.35; }
+  .row-save.always:hover { opacity: 1; }
+  .trow:hover .row-save.always { opacity: 0.7; }
   .row-save:disabled { opacity: 0.6; cursor: default; }
   .dot-busy {
     width: 9px;
@@ -1802,6 +1978,22 @@
 
   .now-side { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 
+  /* playlist button, next to Save: same quiet circle as the transport icons */
+  .now-pl {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--panel-3);
+    color: var(--text-2);
+    cursor: pointer;
+    transition: color 120ms ease, background 120ms ease;
+  }
+  .now-pl:hover { color: var(--text); background: var(--panel-4, var(--panel-3)); }
+
   .now-save {
     position: relative;
     overflow: hidden;
@@ -1927,6 +2119,75 @@
     to { opacity: 1; transform: none; }
   }
   .dialog h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--text); }
+  .pl-list {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+    max-height: 190px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .pl-pick {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 8px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--text-2);
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .pl-pick:hover { background: var(--panel-3); color: var(--text); }
+  .pl-pick .count { margin-left: auto; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+  .pl-new { display: flex; gap: 8px; margin-top: 10px; }
+  .pl-new input {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+    font-size: 12px;
+    outline: none;
+  }
+  .pl-new input:focus { border-color: rgb(139 123 255 / 0.5); }
+  .pl-new .primary {
+    padding: 7px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: linear-gradient(180deg, var(--accent-2), var(--accent));
+    color: #fff;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .pl-new .primary:disabled { opacity: 0.5; cursor: default; }
+  .dlg-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
+  .rail-add {
+    margin-left: auto;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: none;
+    color: var(--text-3);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .rail-add:hover { background: var(--panel-3); color: var(--text); }
+  .rail-empty { margin: 2px 8px 4px; font-size: 11px; line-height: 1.45; color: var(--text-3); }
+
   .dlg-body { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--text-2); }
   .dlg-body code {
     background: var(--panel-2);

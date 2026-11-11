@@ -30,6 +30,7 @@ export { default as Radio } from "lucide-svelte/icons/radio";
 export { default as SkipBack } from "lucide-svelte/icons/skip-back";
 export { default as RefreshCw } from "lucide-svelte/icons/refresh-cw";
 export { default as ListMusic } from "lucide-svelte/icons/list-music";
+export { default as ListPlus } from "lucide-svelte/icons/list-plus";
 export { default as History } from "lucide-svelte/icons/history";
 export { default as Shuffle } from "lucide-svelte/icons/shuffle";
 export { default as Pause } from "lucide-svelte/icons/pause";
