@@ -1,6 +1,6 @@
 [package]
 name = "wagmify"
-version = "0.2.0"
+version = "0.2.1"
 description = "Wagmify Soundboard — play audio through a virtual mic in Discord"
 authors = ["0xwagmi"]
 edition = "2024"

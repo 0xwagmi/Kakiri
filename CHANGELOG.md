@@ -4,6 +4,53 @@ All notable changes to Wagmify are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1]
+
+### Added
+
+- **Playlists you name yourself.** A list holds artist and title, not a file, so a
+  track can sit in a playlist without ever being saved. Save it later and playback
+  starts using the local file, because the player looks tracks up the same way.
+  Add from any row or from the bar you are playing in, create a list from the dialog,
+  remove single tracks, delete the list.
+- **A player for local files.** Every sound card has a second button that plays its
+  folder as a queue, with pause, seek and next/previous instead of layering it into
+  the call.
+- **One bar for playback across the app**, so leaving Online no longer hides what is
+  playing. It is glass, it does not float over anything, and it grows to fit.
+- **Discord presence**, off by default: the track you are on, sent to Discord's socket
+  on this machine and nowhere else.
+- **Update check** at launch, once per release, with Later remembered.
+- **Clear recent plays** from the view that shows them.
+- **Maintenance** shows what is on disk (cover art, streamed music, logs) before
+  offering to clear it. Saved music is never touched.
+- `wagmify --pad N` fires a pad in the running instance, which is how global keys can
+  work on Wayland through a desktop shortcut.
+
+### Changed
+
+- **Dark is the default theme.** A saved choice still wins.
+- Hotkeys are registered at launch instead of the first time the Pads tab is opened,
+  and pads fire from any tab.
+- Pads, Timeline and the library folders lost their boxes: soft surfaces, hairline
+  rows, a quiet playhead, real icons instead of folder emoji.
+- Settings keeps its explanations behind a `?` next to the heading.
+
+### Fixed
+
+- **Saving never showed as saved** in some places: the check was a plain function, so
+  the template had nothing to react to.
+- **Playing a saved or cached track re-resolved a URL first**, which looked like
+  several seconds of buffering over audio already on disk.
+- Saving twice downloaded twice, and the metadata sidecar had no cover.
+- **Windows: yt-dlp and ffmpeg opened a console window** over the app.
+- Two elements sharing one class name broke the search bar and the Last.fm empty
+  state; both got their own names, and a sweep of every component found three more.
+- Timeline stopped rendering after the library moved, because two roots pointed at the
+  same file and a keyed list threw on the duplicate path.
+- Stopping from the app-wide bar advanced the queue, and play-as-track could start the
+  whole library at once.
+
 ## [0.2.0]
 
 ### Changed
