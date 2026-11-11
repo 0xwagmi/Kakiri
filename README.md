@@ -89,6 +89,20 @@ Ubuntu ships enabled.
   Settings, and tag stations and loved tracks appear. No key, no Last.fm, everything
   else still works.
 
+## Pads and hotkeys
+
+Sixteen pads, each with its own sound and an optional global hotkey, bound in Pads →
+Edit pads. On Linux those are X11 grabs, so under a Wayland session they only fire
+while an X11 window has focus. The way around that is a desktop shortcut at the
+compositor level: point it at
+
+```bash
+wagmify --pad 3
+```
+
+which asks the running instance to play pad 3, and works on Wayland, X11, and while
+a game has focus. The same flag works as a cold start.
+
 ## How it is built
 
 Rust for the audio, Tauri 2 for the window, Svelte for the interface. Decoding is

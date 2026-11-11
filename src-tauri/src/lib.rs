@@ -1820,6 +1820,35 @@ fn set_hotkeys(app: tauri::AppHandle, accelerators: Vec<String>) -> Vec<String> 
         .collect()
 }
 
+/// A pad index requested on the command line, waiting for the UI to ask.
+static PENDING_PAD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+/// `--pad N` / `--pad=N`, 1-based for humans, returned 0-based.
+fn pad_from_args(argv: &[String]) -> Option<usize> {
+    let mut it = argv.iter().skip(1);
+    while let Some(a) = it.next() {
+        let raw = if let Some(rest) = a.strip_prefix("--pad=") {
+            rest.to_string()
+        } else if a == "--pad" {
+            it.next()?.clone()
+        } else {
+            continue;
+        };
+        let n: usize = raw.trim().parse().ok()?;
+        if (1..=64).contains(&n) {
+            return Some(n - 1);
+        }
+    }
+    None
+}
+
+/// Was the app started with `--pad N`? Returned once, so a late listener sees it.
+#[tauri::command]
+fn pending_pad() -> Option<usize> {
+    let v = PENDING_PAD.swap(-1, std::sync::atomic::Ordering::Relaxed);
+    (v >= 0).then_some(v as usize)
+}
+
 /// Hide instead of quitting: a soundboard is useful while its window is closed,
 /// and Quit lives in the tray menu so the app can never become unreachable.
 fn hide_on_close(window: &tauri::WebviewWindow) -> Result<(), Box<dyn std::error::Error>> {
@@ -1905,8 +1934,15 @@ pub fn run() {
     tauri::Builder::default()
         // First plugin, as the single-instance plugin requires: a second launch
         // must not create a second engine writing to the same virtual sink.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             use tauri::Manager;
+            // `wagmify --pad 3` fires a pad in the running instance, so a desktop
+            // shortcut can drive it on Wayland, where X11 grabs never see the key
+            if let Some(i) = pad_from_args(&argv) {
+                use tauri::Emitter;
+                let _ = app.emit("pad", i);
+                return;
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
@@ -1949,6 +1985,10 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             migrate_old_name(app.handle());
+            let argv: Vec<String> = std::env::args().collect();
+            if let Some(i) = pad_from_args(&argv) {
+                PENDING_PAD.store(i as i32, std::sync::atomic::Ordering::Relaxed);
+            }
             // Where a downloader fetched by the import panel lives.
             if let Ok(dir) = app.path().app_local_data_dir() {
                 download::set_tools_dir(dir.join("tools"));
@@ -2015,6 +2055,7 @@ pub fn run() {
             unsave_online,
             update_check,
             presence_set,
+            pending_pad,
             cache_usage,
             cache_clear,
             presence_connected,

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { open } from "@tauri-apps/plugin-dialog";
   import SoundCard from "$lib/SoundCard.svelte";
   import Companion from "$lib/Companion.svelte";
@@ -160,6 +161,15 @@
         if (!u || !u.version) return;
         const skipped = JSON.parse(localStorage.getItem(LS_PREFS) ?? "{}").updateSkipped;
         if (skipped !== u.version) update = u;
+      })
+      .catch(() => {});
+
+    // hotkeys and `wagmify --pad N` both land here, on every tab
+    void listen<string>("hotkey", (e) => firePadByAccelerator(e.payload));
+    void listen<number>("pad", (e) => firePad(e.payload));
+    void invoke<number | null>("pending_pad")
+      .then((i) => {
+        if (i !== null) firePad(i);
       })
       .catch(() => {});
 
@@ -377,6 +387,34 @@
     roots = roots.filter((r) => r !== path);
     localStorage.setItem(LS_ROOTS, JSON.stringify(roots));
     await refreshLibrary();
+  }
+
+  /** Pads live in localStorage; the page owns the trigger so a hotkey or a
+      desktop shortcut still works while another tab is showing. */
+  function padAt(i: number): { soundPath: string | null; name: string } | null {
+    try {
+      const pads = JSON.parse(localStorage.getItem("sb.pads") ?? "[]");
+      return Array.isArray(pads) ? (pads[i] ?? null) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function firePad(i: number) {
+    const pad = padAt(i);
+    if (pad?.soundPath) void playPath(pad.soundPath, pad.name || "");
+  }
+
+  function firePadByAccelerator(accel: string) {
+    try {
+      const pads = JSON.parse(localStorage.getItem("sb.pads") ?? "[]");
+      const i = (Array.isArray(pads) ? pads : []).findIndex(
+        (p: { canonical: string | null }) => p.canonical && p.canonical === accel,
+      );
+      if (i >= 0) firePad(i);
+    } catch {
+      /* nothing bound */
+    }
   }
 
   async function play(s: Sound) {
