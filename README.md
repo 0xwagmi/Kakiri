@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="static/icon.png" width="140" height="140" alt="Kakiri Soundboard" />
+  <img src="static/icon.png" width="140" height="140" alt="Wagmify Soundboard" />
 </p>
 
-<h1 align="center">Kakiri Soundboard</h1>
+<h1 align="center">Wagmify Soundboard</h1>
 
 <p align="center"><em>Play sounds through a virtual microphone in Discord — with your voice.</em></p>
 
@@ -37,7 +37,7 @@ were your voice.
 - **Live voice input** mixed into the virtual mic (talk *and* play sounds)
 - Decodes mp3 / m4a / flac / ogg / wav + more via `symphonia` (no ffmpeg)
 
-Closing the window keeps Kakiri running in the tray (left click toggles it, Quit
+Closing the window keeps Wagmify running in the tray (left click toggles it, Quit
 is in the tray menu) — a soundboard is most useful while its window is closed.
 On GNOME the tray needs the AppIndicator extension, which Ubuntu ships enabled
 (`gnome-shell-extension-appindicator` on other distributions).
@@ -100,7 +100,7 @@ docs/
 If you just want the app, without a Rust/Node toolchain:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/0xwagmi/Kakiri/main/scripts/install-release.sh | bash
+curl -fsSL https://raw.githubusercontent.com/0xwagmi/Wagmify/main/scripts/install-release.sh | bash
 ```
 
 It downloads the ~7 MB `.deb` from the latest release, verifies it against the
@@ -115,12 +115,12 @@ npm install
 ./scripts/install.sh           # builds the app and installs it (no sudo)
 ```
 
-That puts a `kakiri` command in `~/.local/bin`, installs the icon in every size
-under `~/.local/share/icons/hicolor`, and adds a menu entry, so Kakiri shows up
+That puts a `wagmify` command in `~/.local/bin`, installs the icon in every size
+under `~/.local/share/icons/hicolor`, and adds a menu entry, so Wagmify shows up
 in your application launcher like any other program:
 
 ```bash
-kakiri                 # launches the app
+wagmify                 # launches the app
 ./scripts/uninstall.sh            # removes the command, icon and menu entry
 ./scripts/uninstall.sh --purge    # ...and its settings + downloaded tools
 ```
@@ -143,7 +143,7 @@ Releases are built by CI, not by hand, and only for a version tag (pushing to
 # 1. bump the version in src-tauri/tauri.conf.json, package.json and Cargo.toml
 # 2. add the release to CHANGELOG.md
 git commit -am "Release vX.Y.Z"
-git tag -a vX.Y.Z -m "Kakiri vX.Y.Z"
+git tag -a vX.Y.Z -m "Wagmify vX.Y.Z"
 git push origin dev --follow-tags        # CI builds and publishes
 ```
 
@@ -161,7 +161,7 @@ builds a draft release for an existing tag.
 ```bash
 npm install
 npm run tauri dev          # debug build + Vite + hot reload, rebuilds on save
-./scripts/install.sh       # packaged build into ~/.local (kakiri, icon, menu entry)
+./scripts/install.sh       # packaged build into ~/.local (wagmify, icon, menu entry)
 ```
 
 The backend can also be exercised headlessly with the spike CLI:

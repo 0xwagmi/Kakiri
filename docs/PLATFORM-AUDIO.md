@@ -23,7 +23,7 @@ pw-loopback \
 - Lifecycle: the app creates it on launch and it dies with the app by default.
   For a **persistent** device (survives app exit *and* reboots) the app can
   install a PipeWire drop-in,
-  `~/.config/pipewire/pipewire.conf.d/90-kakiri-soundboard.conf`, which loads
+  `~/.config/pipewire/pipewire.conf.d/90-wagmify-soundboard.conf`, which loads
   `libpipewire-module-loopback` inside the daemon itself:
 
 ```

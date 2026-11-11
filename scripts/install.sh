@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Install Kakiri into your user account (no sudo, no root files touched).
+# Install Wagmify into your user account (no sudo, no root files touched).
 #
 #   ./scripts/install.sh              # build the app and install it
 #   ./scripts/install.sh --prefix DIR # install somewhere else (default ~/.local)
 #   ./scripts/install.sh --uninstall  # remove it again
 #
-# Installs: $PREFIX/bin/kakiri, $PREFIX/share/applications/kakiri.desktop and the
+# Installs: $PREFIX/bin/wagmify, $PREFIX/share/applications/wagmify.desktop and the
 # icon in every size under $PREFIX/share/icons/hicolor, so it shows up in the
 # application menu like any other program.
 #
@@ -38,28 +38,28 @@ done
 BIN_DIR="$PREFIX/bin"
 APP_DIR="$PREFIX/share/applications"
 ICON_ROOT="$PREFIX/share/icons/hicolor"
-BIN="$BIN_DIR/kakiri"
+BIN="$BIN_DIR/wagmify"
 
 install_desktop_entry() {
   local exec_path="$1"
   mkdir -p "$APP_DIR"
-  cat >"$APP_DIR/kakiri.desktop" <<EOF
+  cat >"$APP_DIR/wagmify.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Kakiri
+Name=Wagmify
 GenericName=Soundboard
 Comment=Play sounds through a virtual microphone in Discord
 Exec=$exec_path
-Icon=kakiri
+Icon=wagmify
 Terminal=false
 Categories=AudioVideo;Audio;Mixer;
 Keywords=soundboard;audio;mixer;discord;mic;voice;
 StartupNotify=true
-StartupWMClass=kakiri
+StartupWMClass=wagmify
 EOF
-  chmod 644 "$APP_DIR/kakiri.desktop"
-  ok "desktop entry: $APP_DIR/kakiri.desktop"
+  chmod 644 "$APP_DIR/wagmify.desktop"
+  ok "desktop entry: $APP_DIR/wagmify.desktop"
 }
 
 install_icons() {
@@ -73,9 +73,9 @@ install_icons() {
     [ -f "$src" ] || continue
     dir="$ICON_ROOT/${size}x${size}/apps"
     mkdir -p "$dir"
-    install -m644 "$src" "$dir/kakiri.png"
+    install -m644 "$src" "$dir/wagmify.png"
   done
-  ok "icons: $ICON_ROOT/<size>/apps/kakiri.png"
+  ok "icons: $ICON_ROOT/<size>/apps/wagmify.png"
 }
 
 refresh_caches() {
@@ -93,7 +93,7 @@ info "building the app (frontend + release binary)"
 # --no-bundle: we install the binary ourselves, so no .deb/AppImage is produced.
 npm run tauri build -- --no-bundle
 
-BUILT="$ROOT/target/release/soundboard"
+BUILT="$ROOT/target/release/wagmify"
 [ -f "$BUILT" ] || die "the build finished but $BUILT does not exist"
 
 info "installing to $PREFIX"
@@ -105,8 +105,8 @@ install_desktop_entry "$BIN"
 refresh_caches
 
 echo
-ok "Kakiri is installed"
-echo "  launch it with: kakiri        (or find \"Kakiri\" in your application menu)"
+ok "Wagmify is installed"
+echo "  launch it with: wagmify        (or find \"Wagmify\" in your application menu)"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) echo "  note: $BIN_DIR is not on your PATH — add it to use the command" ;;

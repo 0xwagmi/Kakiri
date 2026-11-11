@@ -93,11 +93,11 @@ impl Config {
                 })
                 .unwrap_or(fallback)
         };
-        let release_ms = num("KAKIRI_RELEASE_MS", d.release_frames as f32 * 10.0);
+        let release_ms = num("WAGMIFY_RELEASE_MS", d.release_frames as f32 * 10.0);
         Self {
-            wet_db: num("KAKIRI_WET_DB", d.wet_db),
-            vad: flag("KAKIRI_VAD", d.vad),
-            vad_thres: (num("KAKIRI_VAD_THRES", d.vad_thres * 100.0) / 100.0).clamp(0.0, 1.0),
+            wet_db: num("WAGMIFY_WET_DB", d.wet_db),
+            vad: flag("WAGMIFY_VAD", d.vad),
+            vad_thres: (num("WAGMIFY_VAD_THRES", d.vad_thres * 100.0) / 100.0).clamp(0.0, 1.0),
             release_frames: (release_ms / 10.0).round().max(0.0) as i32,
         }
     }

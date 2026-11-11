@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Remove Kakiri from your user account.
+# Remove Wagmify from your user account.
 #
 #   ./scripts/uninstall.sh            # remove the app, icons and menu entry
 #   ./scripts/uninstall.sh --purge    # also delete library settings and tools
 #   ./scripts/uninstall.sh --prefix DIR
 #
-# --purge deletes the app's data directory (~/.local/share/com.kakiri.soundboard):
+# --purge deletes the app's data directory (~/.local/share/com.wagmify.soundboard):
 # window preferences, the library folder list, the timeline, and the downloader
 # (yt-dlp) that the import panel fetched. Your sound files are never touched.
 #
@@ -38,7 +38,7 @@ done
 BIN_DIR="$PREFIX/bin"
 APP_DIR="$PREFIX/share/applications"
 ICON_ROOT="$PREFIX/share/icons/hicolor"
-DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/com.kakiri.soundboard"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/com.wagmify.soundboard"
 
 confirm() {
   [ "$ASSUME_YES" = "1" ] && return 0
@@ -48,20 +48,20 @@ confirm() {
 }
 
 removed=0
-if [ -e "$BIN_DIR/kakiri" ] || [ -L "$BIN_DIR/kakiri" ]; then
-  rm -f "$BIN_DIR/kakiri"
-  ok "removed $BIN_DIR/kakiri"
+if [ -e "$BIN_DIR/wagmify" ] || [ -L "$BIN_DIR/wagmify" ]; then
+  rm -f "$BIN_DIR/wagmify"
+  ok "removed $BIN_DIR/wagmify"
   removed=1
 fi
 
-if [ -e "$APP_DIR/kakiri.desktop" ]; then
-  rm -f "$APP_DIR/kakiri.desktop"
-  ok "removed $APP_DIR/kakiri.desktop"
+if [ -e "$APP_DIR/wagmify.desktop" ]; then
+  rm -f "$APP_DIR/wagmify.desktop"
+  ok "removed $APP_DIR/wagmify.desktop"
   removed=1
 fi
 
 for size in 32 64 128 256 512; do
-  icon="$ICON_ROOT/${size}x${size}/apps/kakiri.png"
+  icon="$ICON_ROOT/${size}x${size}/apps/wagmify.png"
   if [ -e "$icon" ]; then
     rm -f "$icon"
     ok "removed $icon"
@@ -92,6 +92,6 @@ if [ "$removed" = "0" ]; then
   warn "nothing was installed in $PREFIX"
 else
   echo
-  ok "Kakiri removed"
+  ok "Wagmify removed"
   echo "  (the repository itself is untouched: $ROOT)"
 fi

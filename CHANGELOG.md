@@ -1,8 +1,54 @@
 # Changelog
 
-All notable changes to Kakiri are recorded here. The format follows
+All notable changes to Wagmify are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.2.0]
+
+### Changed
+
+- **The project is now Wagmify.** New name, new bundle identifier
+  (`com.wagmify.soundboard`), crate and binary names, desktop entry, release asset
+  names and repository. An existing install moves its data folder, its cache and
+  its `Music/Kakiri` library over on the first launch, so nothing looks lost.
+- **Online stays mounted**, so its queue, the playing row and auto-advance survive a
+  trip to another tab instead of resetting.
+- **Settings explanations moved behind a `?` button**, and the copy was rewritten in
+  plainer words, without the dashes.
+
+### Added
+
+- **Discord presence**, off by default, in Settings. Shows the track you are on in
+  your Discord profile. It talks to Discord's socket on this machine only: no
+  account, no token, nothing sent anywhere.
+- **Update check** at launch: asks GitHub for the newest release and offers "Later"
+  or "Get the update". Dismissing a version keeps it quiet, a newer one shows again,
+  and a failed check is silent.
+- **One bar for playback across the app**: cover, title, progress, pause and stop,
+  so leaving Online no longer hides what is playing, plus a way back to the player.
+- **Play a local sound as a track**: a second button on each sound card starts that
+  folder as a queue with pause, seek and next/previous, instead of layering it into
+  the call.
+- Empty states show the app's cat, one plain sentence and a way forward, instead of
+  a bare warning line.
+
+### Fixed
+
+- **The save button never turned into "saved"** after a successful save: the check
+  was a plain function, so the UI had nothing to react to. Saved state now comes
+  from a reactive value, and the folder stays the source of truth.
+- **Playing a saved or already-cached track re-resolved a URL first**, which showed
+  as several seconds of "buffering" over audio that was already on disk. Local files
+  are used directly now.
+- Saving the same track twice downloaded it twice, and the metadata sidecar had no
+  cover because the artwork was never passed through.
+- **Windows: yt-dlp and ffmpeg opened a console window** over the app. Helpers are
+  spawned with `CREATE_NO_WINDOW` now.
+- The app-wide bar's stop advanced the queue instead of stopping: a stopped voice
+  read as a finished track.
+- "Play as a track" could start the whole library at once; the folder lookup only
+  searched the top level, and the "has it ended" check raced the voice poll.
 
 ## [0.1.6]
 
@@ -25,7 +71,7 @@ All notable changes to Kakiri are recorded here. The format follows
   at 100 MB per track and 1.5 GB total, evicted least-recently-used.
 - **Background prefetch** keeps filling the cache while a track plays *or is
   paused*, so a short song finishes caching even if you stop.
-- **Save** writes the track into `Music/Kakiri/Online` as a real library file, with
+- **Save** writes the track into `Music/Wagmify/Online` as a real library file, with
   a small metadata sidecar (artist, title, cover) beside it. Saving a cached track
   is a local copy, not a second download, and the button shows the cache filling
   with real KB.
@@ -35,7 +81,7 @@ All notable changes to Kakiri are recorded here. The format follows
   progress line, shuffle, repeat, auto-advance through the queue, and a
   **Recently played** list.
 - **Settings → Online** for the Last.fm key and username, hidden by default with an
-  eye toggle. The key is kept out of `sb.prefs` and stored in Kakiri's own data
+  eye toggle. The key is kept out of `sb.prefs` and stored in Wagmify's own data
   folder, obfuscated, in a file only your user can read. **Known limitation:** with
   a fixed salt in the source this is obfuscation, not encryption — anyone who can
   read that file as you can decode it. Moving it to the system keyring is planned.
@@ -79,8 +125,8 @@ All notable changes to Kakiri are recorded here. The format follows
   leaving residual hiss, and a wet/dry mix keeps some natural body in the voice.
   Measured on a fixed white-noise input: −3.3 dB with the gate off, −16.2 dB with
   it on. Turn Discord's own suppression off afterwards — it would gate the sounds
-  you play. Tuning knobs, for A/B tests without rebuilding: `KAKIRI_WET_DB`,
-  `KAKIRI_VAD`, `KAKIRI_VAD_THRES`, `KAKIRI_RELEASE_MS`.
+  you play. Tuning knobs, for A/B tests without rebuilding: `WAGMIFY_WET_DB`,
+  `WAGMIFY_VAD`, `WAGMIFY_VAD_THRES`, `WAGMIFY_RELEASE_MS`.
   A DeepFilterNet engine was measured and dropped: 44 % of a core on a laptop
   against RNNoise's 1 %, for a quality difference Discord's 64 kbps Opus would
   largely erase.
@@ -143,7 +189,7 @@ All notable changes to Kakiri are recorded here. The format follows
 
 - **Tray icon** (white cat, works with GNOME's appindicator extension): left
   click toggles the window, the menu has Show / Quit. Closing the window now
-  hides Kakiri instead of quitting, so a soundboard keeps working mid-call;
+  hides Wagmify instead of quitting, so a soundboard keeps working mid-call;
   Quit lives in the tray so the app can never be left running with no way back.
 
 ## [0.1.1] — desktop polish (Linux alpha)
@@ -152,26 +198,26 @@ Everything a reviewer would poke at in a first release. No audio-path changes.
 
 ### Added
 
-- **Single-instance guard**: launching Kakiri while it is already running raises
+- **Single-instance guard**: launching Wagmify while it is already running raises
   the existing window instead of starting a second engine. Two engines used to
   write the same virtual sink and the same settings file.
-- **File logging** to `~/.local/share/com.kakiri.soundboard/logs/Kakiri.log` with
+- **File logging** to `~/.local/share/com.wagmify.soundboard/logs/Wagmify.log` with
   a panic hook, so a bug report comes with context: version, backend, bus
   format, virtual-mic status and output target are logged at startup.
   Third-party crates log errors only (symphonia logs a warning per probed file).
 - **AppStream metadata** (`/usr/share/metainfo`), so software centres can show
-  Kakiri with a description and category.
+  Wagmify with a description and category.
 - `pipewire` added to the package dependencies.
 
 ### Changed
 
 - **Content Security Policy** instead of `null`: no inline script, `data:` only
   for images/media, `connect-src` limited to the app and its IPC origins.
-- The desktop entry is now `Name=Kakiri` with
-  `Categories=AudioVideo;Audio;Mixer;` (it was "Kakiri Soundboard" and an empty
+- The desktop entry is now `Name=Wagmify` with
+  `Categories=AudioVideo;Audio;Mixer;` (it was "Wagmify Soundboard" and an empty
   category, which filed it under "Other" in some launchers).
-- Release assets are named `Kakiri_<version>_amd64.deb` rather than
-  `Kakiri Soundboard_…`, and `SHA256SUMS` lists plain file names so
+- Release assets are named `Wagmify_<version>_amd64.deb` rather than
+  `Wagmify Soundboard_…`, and `SHA256SUMS` lists plain file names so
   `sha256sum -c SHA256SUMS` works for files downloaded side by side.
 - The release workflow builds on **Ubuntu 24.04**: `libspa-sys` needs PipeWire 1.0
   headers, so a 22.04 build was never runnable anyway. Release notes now state
@@ -185,7 +231,7 @@ Everything a reviewer would poke at in a first release. No audio-path changes.
 
 ## [0.1.0] — first public build (Linux alpha)
 
-First release. Kakiri plays sounds through a virtual microphone so Discord (or
+First release. Wagmify plays sounds through a virtual microphone so Discord (or
 any other app) hears them as your voice, and mixes your real microphone in so
 you can still talk.
 
@@ -197,7 +243,7 @@ you can still talk.
 - **Linux output** via native PipeWire (ADR-4), with a `pw-play` CLI fallback
   (`SOUNDBOARD_PW_BACKEND=cli`) and a `cpal` backend written for Windows/macOS.
 - **Virtual microphone**: a daemon-owned `libpipewire-module-loopback` drop-in
-  (`~/.config/pipewire/pipewire.conf.d/90-kakiri-soundboard.conf`) that survives
+  (`~/.config/pipewire/pipewire.conf.d/90-wagmify-soundboard.conf`) that survives
   app exit and reboot, auto-created at launch. Shows up in Discord as
   "Soundboard Mic".
 - **Live voice input** captured by the app itself and mixed into the virtual mic
@@ -218,7 +264,7 @@ you can still talk.
   (`--download-sections`) so a 3-minute video becomes a 6-second sound. The
   downloader can be installed/updated from the panel.
 - **Install tooling**: `scripts/install.sh` (standalone or `--dev`),
-  `scripts/uninstall.sh` (with `--purge`) and a `kakiri` command with desktop
+  `scripts/uninstall.sh` (with `--purge`) and a `wagmify` command with desktop
   entry and icons.
 - **Release automation**: tag-driven GitHub Actions workflow publishing
   `.deb` / `.rpm` / `.AppImage` with checksums.
@@ -251,9 +297,9 @@ you can still talk.
 - `ffmpeg` and `yt-dlp` are optional, detected on `PATH`; the app offers to fetch
   yt-dlp itself.
 
-[0.1.5]: https://github.com/0xwagmi/Kakiri/compare/v0.1.4...v0.1.5
-[0.1.4]: https://github.com/0xwagmi/Kakiri/compare/v0.1.3...v0.1.4
-[0.1.3]: https://github.com/0xwagmi/Kakiri/compare/v0.1.2...v0.1.3
-[0.1.2]: https://github.com/0xwagmi/Kakiri/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/0xwagmi/Kakiri/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/0xwagmi/Kakiri/releases/tag/v0.1.0
+[0.1.5]: https://github.com/0xwagmi/Wagmify/compare/v0.1.4...v0.1.5
+[0.1.4]: https://github.com/0xwagmi/Wagmify/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/0xwagmi/Wagmify/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/0xwagmi/Wagmify/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/0xwagmi/Wagmify/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/0xwagmi/Wagmify/releases/tag/v0.1.0

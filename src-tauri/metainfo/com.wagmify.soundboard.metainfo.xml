@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>com.kakiri.soundboard</id>
-  <name>Kakiri</name>
+  <id>com.wagmify.soundboard</id>
+  <name>Wagmify</name>
   <summary>Play sounds through a virtual microphone in Discord</summary>
 
   <metadata_license>MIT</metadata_license>
@@ -9,7 +9,7 @@
 
   <description>
     <p>
-      Kakiri is a soundboard that mixes sound effects and music into a virtual
+      Wagmify is a soundboard that mixes sound effects and music into a virtual
       microphone, so Discord (or any other voice app) hears them as your voice.
       Your real microphone is mixed in as well, so you can keep talking.
     </p>
@@ -23,9 +23,9 @@
     </ul>
   </description>
 
-  <launchable type="desktop-id">Kakiri.desktop</launchable>
-  <url type="homepage">https://github.com/0xwagmi/Kakiri</url>
-  <url type="bugtracker">https://github.com/0xwagmi/Kakiri/issues</url>
+  <launchable type="desktop-id">wagmify.desktop</launchable>
+  <url type="homepage">https://github.com/0xwagmi/Wagmify</url>
+  <url type="bugtracker">https://github.com/0xwagmi/Wagmify/issues</url>
 
   <provides>
     <binary>soundboard</binary>

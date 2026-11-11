@@ -35,7 +35,7 @@ fn client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(12))
         .connect_timeout(Duration::from_secs(6))
-        .user_agent("Kakiri")
+        .user_agent("Wagmify")
         .build()
         .map_err(|e| format!("http client: {e}"))
 }

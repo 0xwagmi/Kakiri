@@ -1,6 +1,6 @@
 {
-  "name": "kakiri-soundboard",
-  "version": "0.1.6",
+  "name": "wagmify-soundboard",
+  "version": "0.2.0",
   "description": "",
   "type": "module",
   "scripts": {

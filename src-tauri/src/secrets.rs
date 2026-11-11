@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use tauri::Manager;
 
-const SALT: &[u8] = b"kakiri-soundboard-v1";
+const SALT: &[u8] = b"wagmify-soundboard-v1";
 
 fn xform(data: &[u8]) -> Vec<u8> {
     data.iter()

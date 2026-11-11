@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Turn a clip of the companion into the animated-WebP loops Kakiri ships.
+# Turn a clip of the companion into the animated-WebP loops Wagmify ships.
 #
 #   ./scripts/companion-assets.sh <source.mp4> [out-dir]
 #
@@ -28,7 +28,7 @@
 # Segments are given in SEGMENTS as "name:start:seconds[:palindrome]". Every
 # state comes from its own clip, so run the script once per clip:
 #
-#   SEGMENTS="wave:0:5.3" ./scripts/companion-assets.sh ~/Videos/kakiri-companion/wave_hello.mp4
+#   SEGMENTS="wave:0:5.3" ./scripts/companion-assets.sh ~/Videos/wagmify-companion/wave_hello.mp4
 #
 # REF_FRAC pins the scale to a fraction of frame height (ours: 0.668, the standing
 # body in these clips). Clips shot with the same camera must share it, or a seated

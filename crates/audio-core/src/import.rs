@@ -187,10 +187,12 @@ pub fn ensure_playable(
     } else {
         unique_path(dir, &stem, "m4a")
     };
-    let part = dir.join(format!(".kakiri-convert-{}.m4a", std::process::id()));
+    let part = dir.join(format!(".wagmify-convert-{}.m4a", std::process::id()));
     let total = duration_of(path);
     on_progress(0.0, "converting");
-    let mut child = Command::new(&ffmpeg)
+    let mut cmd = Command::new(&ffmpeg);
+    crate::proc::quiet(&mut cmd);
+    let mut child = cmd
         .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i"])
         .arg(path)
         .args(["-vn", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"])
@@ -316,6 +318,7 @@ fn extract_audio(
         let target = unique_path(dest_dir, stem, "m4a");
         let part = target.with_extension("part.m4a");
         let mut cmd = Command::new(&ffmpeg);
+        crate::proc::quiet(&mut cmd);
         cmd.arg("-hide_banner")
             .arg("-nostdin")
             .arg("-loglevel")
@@ -392,7 +395,7 @@ mod tests {
 
     #[test]
     fn duplicate_names_get_a_counter() {
-        let dir = std::env::temp_dir().join(format!("kakiri-unique-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("wagmify-unique-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let first = unique_path(&dir, "song", "mp3");
@@ -434,7 +437,7 @@ mod tests {
 
     #[test]
     fn a_garbage_file_is_reported_unplayable() {
-        let dir = std::env::temp_dir().join(format!("kakiri-unplayable-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("wagmify-unplayable-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let bad = dir.join("bad.m4a");
@@ -446,7 +449,7 @@ mod tests {
 
     #[test]
     fn a_real_audio_file_is_playable() {
-        let dir = std::env::temp_dir().join(format!("kakiri-playable-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("wagmify-playable-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let good = dir.join("good.wav");
@@ -461,7 +464,7 @@ mod tests {
 
     #[test]
     fn repairing_a_hopeless_file_fails_cleanly() {
-        let dir = std::env::temp_dir().join(format!("kakiri-repair-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("wagmify-repair-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let bad = dir.join("broken.m4a");
@@ -481,7 +484,7 @@ mod tests {
 
     #[test]
     fn importing_an_audio_file_copies_it_untouched() {
-        let base = std::env::temp_dir().join(format!("kakiri-import-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("wagmify-import-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let src_dir = base.join("in");
         let dest_dir = base.join("out");

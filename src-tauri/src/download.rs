@@ -61,7 +61,9 @@ pub fn cancel(job: &str) -> bool {
     let Some(pid) = pid else { return true };
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("taskkill")
+        let mut cmd = std::process::Command::new("taskkill");
+        audio_core::proc::quiet(&mut cmd);
+        let _ = cmd
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .output();
     }
@@ -95,11 +97,9 @@ fn managed_tool(name: &str) -> Option<PathBuf> {
 }
 
 fn version_of(exe: &Path) -> Option<String> {
-    let out = std::process::Command::new(exe)
-        .arg("--version")
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let mut cmd = std::process::Command::new(exe);
+    audio_core::proc::quiet(&mut cmd);
+    let out = cmd.arg("--version").output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -224,7 +224,7 @@ pub fn split_error(err: &str) -> (&str, &str) {
 /// The latest published version, from GitHub's release feed.
 pub fn latest_release() -> Result<String, String> {
     let resp = reqwest::blocking::Client::builder()
-        .user_agent(concat!("Kakiri/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Wagmify/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| e.to_string())?
@@ -366,7 +366,7 @@ pub fn fetch(
 /// Ask for the headers only, to find out what kind of thing a link points at.
 fn peek_content_type(url: &str) -> Option<String> {
     let client = reqwest::blocking::Client::builder()
-        .user_agent(concat!("Kakiri/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Wagmify/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(20))
         .build()
@@ -396,7 +396,7 @@ pub fn fetch_direct(url: &str, dest_dir: &Path, on_progress: &mut dyn FnMut(f32,
         .map_err(|e| format!("cannot create {}: {e}", dest_dir.display()))?;
 
     let client = reqwest::blocking::Client::builder()
-        .user_agent(concat!("Kakiri/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Wagmify/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(20))
         .timeout(Duration::from_secs(900))
         .build()
@@ -536,8 +536,8 @@ pub fn probe_page(url: &str) -> Result<PageInfo, String> {
 fn probe_page_job(job: &str, url: &str) -> Result<PageInfo, String> {
     let (exe, _) = ytdlp().ok_or_else(|| MISSING_YTDLP.to_string())?;
     let mut cmd = std::process::Command::new(&exe);
+    audio_core::proc::quiet(&mut cmd);
     cmd.args(["-J", "--no-playlist", "--no-warnings", url])
-        .stdin(std::process::Stdio::null())
         // both pipes must be captured: without this the child inherits ours,
         // its output lands in the app's console and the error text is lost
         .stdout(std::process::Stdio::piped())
@@ -598,10 +598,11 @@ pub fn fetch_ytdlp(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let prefix = format!(".kakiri-{}-{stamp}", std::process::id());
+    let prefix = format!(".wagmify-{}-{stamp}", std::process::id());
     let template = dest_dir.join(format!("{prefix}.%(ext)s"));
 
     let mut cmd = std::process::Command::new(&exe);
+    audio_core::proc::quiet(&mut cmd);
     cmd.arg("-f")
         .arg("bestaudio[ext=m4a]/bestaudio/best")
         .args(["--no-playlist", "--no-warnings", "--newline", "--no-simulate"])
@@ -803,7 +804,7 @@ pub fn ensure_ytdlp(
 
     on_progress(0.0, "downloading the downloader");
     let mut resp = reqwest::blocking::Client::builder()
-        .user_agent(concat!("Kakiri/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Wagmify/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| e.to_string())?
         .get(&url)

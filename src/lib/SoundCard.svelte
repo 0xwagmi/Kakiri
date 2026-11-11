@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { Headphones, Music } from "$lib/icons";
+  import { Headphones, ListMusic, Music } from "$lib/icons";
 
   type Sound = {
     id: string;
@@ -17,6 +17,8 @@
   export let s: Sound;
   export let play: (s: Sound) => void;
   export let preview: (s: Sound) => void;
+  /** play this one as a track, with a queue, instead of layering it */
+  export let player: (s: Sound) => void = () => {};
   export let fmtDur: (d: number | null) => string;
 
   let cover: string | null = null;
@@ -41,6 +43,14 @@
   onclick={() => play(s)}
   onkeydown={(e) => e.key === "Enter" && play(s)}
 >
+  <button
+    class="prev track"
+    title="Play as a track: queue, pause, next"
+    onclick={(e) => {
+      e.stopPropagation();
+      player(s);
+    }}><ListMusic size={13} /></button
+  >
   <button
     class="prev"
     title="Preview locally — not sent to the call"
@@ -146,5 +156,9 @@
   }
   .prev:hover {
     color: var(--accent-2);
+  }
+  /* sits beside the preview button, same hover reveal */
+  .prev.track {
+    right: 40px;
   }
 </style>

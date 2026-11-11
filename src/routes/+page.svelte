@@ -11,6 +11,8 @@
   import Settings from "$lib/Settings.svelte";
   import Timeline from "$lib/Timeline.svelte";
   import Online from "$lib/Online.svelte";
+  import Update from "$lib/Update.svelte";
+  import MiniPlayer from "$lib/MiniPlayer.svelte";
   import { Mic, Headphones, Music, Square, TriangleAlert, X, Plus, Repeat, Cog, Volume2, Download } from "$lib/icons";
 
   type Sound = {
@@ -68,6 +70,42 @@
   let companion = true;
   let denoise = false;
   // Online mode's personal layer (Last.fm); empty = key-less mode
+  const inTauri = "__TAURI_INTERNALS__" in (window as unknown as object);
+
+  // "A new version is out", asked once per launch and shown once per release.
+  let update: { version: string; url: string; notes: string } | null = null;
+
+  // Discord presence: a toggle, plus the last thing we sent so we only talk to
+  // Discord when the story actually changes.
+  let discord = false;
+  let discordOk = true;
+  // A small player for local files: same sounds, but one at a time, with a queue.
+  // Kept apart from the soundboard path so layering still works as before.
+  let libQueue: Sound[] = [];
+  let libIndex = -1;
+  let libVoice: number | null = null;
+  let libPaused = false;
+  /** has the poll actually seen this voice yet? without this, a track is "finished"
+      before it starts, and the whole folder gets started in one burst */
+  let libSeen = false;
+
+  let onlineApi: {
+    toggle: () => Promise<void>;
+    stop: () => Promise<void>;
+    seek: (fraction: number) => Promise<void>;
+  } | null = null;
+
+  let onlineNow: {
+    title: string;
+    artist: string;
+    started: number | null;
+    ends: number | null;
+    artwork: string | null;
+    paused: boolean;
+    id: number | null;
+    saved: boolean;
+  } | null = null;
+  let presenceSent = "";
   let lastfmKey = "";
   let lastfmUser = "";
   let lastfmTag = "";
@@ -106,13 +144,82 @@
     );
   }
 
+  /**
+   * What Discord shows, in one place: the track if Online has one, otherwise the
+   * pads/library voice count, otherwise that Wagmify is open. It only sends when the
+   * text changes, so a paused track does not rewrite the presence on every tick.
+   */
+  $: if (inTauri) void pushPresence(discord, onlineNow, voices.length);
+
+  // The socket may come up after we ask, or Discord may start later.
+  onMount(() => {
+    if (!inTauri) return;
+    // a slow, quiet check; failures mean nothing and show nothing
+    void invoke<{ version: string; url: string; notes: string } | null>("update_check")
+      .then((u) => {
+        if (!u || !u.version) return;
+        const skipped = JSON.parse(localStorage.getItem(LS_PREFS) ?? "{}").updateSkipped;
+        if (skipped !== u.version) update = u;
+      })
+      .catch(() => {});
+
+    const t = setInterval(async () => {
+      if (!discord) return;
+      try {
+        discordOk = await invoke<boolean>("presence_connected");
+      } catch {
+        discordOk = false;
+      }
+    }, 15000);
+    return () => clearInterval(t);
+  });
+
+  /** The live voice behind the Online track, for progress and controls. */
+  $: onlineVoice = onlineNow?.id != null ? voices.find((v) => v.id === onlineNow?.id) : undefined;
+  $: barTrack = onlineNow
+    ? { title: onlineNow.title, artist: onlineNow.artist, artwork: onlineNow.artwork }
+    : null;
+
+  async function pushPresence(on: boolean, now: typeof onlineNow, voiceCount: number) {
+    let details: string | null = null;
+    let state = "";
+    let started: number | null = null;
+    let ends: number | null = null;
+    let image: string | null = null;
+
+    if (on) {
+      if (now) {
+        details = now.title || "Playing music";
+        state = now.paused ? "Paused" : now.artist || "Wagmify";
+        started = now.started;
+        ends = now.ends;
+        image = now.artwork;
+      } else if (voiceCount > 0) {
+        details = "Playing the soundboard";
+        state = "Wagmify";
+      } else {
+        details = "In Wagmify";
+        state = "Soundboard";
+      }
+    }
+
+    const sig = JSON.stringify([details, state, started, ends, image]);
+    if (sig === presenceSent) return;
+    presenceSent = sig;
+    try {
+      discordOk = await invoke<boolean>("presence_set", { details, state, started, ends, image });
+    } catch {
+      discordOk = false;
+    }
+  }
+
   function savePrefs() {
     localStorage.setItem(
       LS_PREFS,
       JSON.stringify({
           target, monitorOn, monitorTarget, loop, masterGain,
           micMix, micSource, micGain, retrigger, theme, companion, denoise,
-          lastfmUser, lastfmTag,
+          lastfmUser, lastfmTag, discord,
         }),
     );
   }
@@ -123,6 +230,16 @@
       flatten(f.children, depth + 1, acc);
     }
     return acc;
+  }
+
+  /** The folder a sound lives in, at any depth; null if it is not in the tree. */
+  function folderOf(fs: Folder[], path: string): Folder | null {
+    for (const f of fs) {
+      if (f.sounds.some((x) => x.path === path)) return f;
+      const hit = folderOf(f.children, path);
+      if (hit) return hit;
+    }
+    return null;
   }
 
   function allSounds(fs: Folder[], acc: Sound[] = []) {
@@ -242,7 +359,7 @@
     flash(sound.converted ? `Added ${sound.name} (converted)` : `Added ${sound.name}`);
     const dir = sound.path.replace(/[\\/][^\\/]+$/, "");
     // Importing into a folder that isn't part of the library yet (the default
-    // ~/Music/Kakiri, say) would hide the new sound — adopt it as a root.
+    // ~/Music/Wagmify, say) would hide the new sound — adopt it as a root.
     if (dir && !roots.some((r) => dir === r || dir.startsWith(r + "/") || dir.startsWith(r + "\\"))) {
       roots = [...roots, dir];
       localStorage.setItem(LS_ROOTS, JSON.stringify(roots));
@@ -274,7 +391,7 @@
       // HE-AAC / AAC-Main and friends: the mixer can't decode them, but ffmpeg
       // can re-encode a copy that it can.
       if (/unsupported codec|too complex|unsupported feature|decoder/i.test(msg)) {
-        flash(`${s.name} isn't a format Kakiri can decode.`, {
+        flash(`${s.name} isn't a format Wagmify can decode.`, {
           label: "Convert",
           run: () => void convertAndPlay(s),
         });
@@ -314,7 +431,76 @@
     }
   }
 
-  /** Play only to your own output — the call never hears it. */
+  /** Play a local sound as a track: the queue is its own folder, never the whole
+      library, and never anything the user did not point at. */
+  async function playAsTrack(s: Sound) {
+    const folder = folderOf(folders, s.path);
+    // one folder only, and only if this sound is really in it
+    libQueue = folder?.sounds.length ? folder.sounds : [s];
+    libIndex = Math.max(0, libQueue.findIndex((x) => x.path === s.path));
+    await playLibAt(libIndex);
+  }
+
+  async function playLibAt(i: number) {
+    if (i < 0 || i >= libQueue.length) return;
+    libIndex = i;
+    libPaused = false;
+    const s = libQueue[i];
+    if (libVoice !== null) {
+      try {
+        await invoke("stop_voice", { id: libVoice });
+      } catch {
+        /* already gone */
+      }
+      libVoice = null;
+    }
+    try {
+      const id = await invoke<number | null>("play_sound", {
+        path: s.path,
+        gain: 1,
+        looped: false,
+        route: "both", // a track you chose to hear, so both sides
+        retrigger: "choke",
+      });
+      libVoice = typeof id === "number" ? id : null;
+      libSeen = false;
+    } catch (e) {
+      toast = String(e);
+    }
+  }
+
+  async function toggleLibPause() {
+    if (libVoice === null) return;
+    libPaused = !libPaused;
+    try {
+      await invoke("pause_voice", { id: libVoice, paused: libPaused });
+    } catch {
+      libPaused = !libPaused;
+    }
+  }
+
+  function stopLib() {
+    libQueue = [];
+    libIndex = -1;
+    libPaused = false;
+    libSeen = false;
+    if (libVoice !== null) {
+      void invoke("stop_voice", { id: libVoice }).catch(() => {});
+    }
+    libVoice = null;
+  }
+
+  $: libTrack =
+    libIndex >= 0 && libQueue[libIndex]
+      ? {
+          title: libQueue[libIndex].title ?? libQueue[libIndex].name,
+          artist: libQueue[libIndex].artist ?? "",
+          artwork: null as string | null,
+        }
+      : null;
+  $: libProgress = libVoice !== null ? (voices.find((v) => v.id === libVoice)?.progress ?? 0) : 0;
+
+  /** Play only to your own output, so the call never hears it. */
   async function preview(s: Sound) {
     try {
       if (!monitorOn) {
@@ -502,6 +688,17 @@
     } catch {
       /* engine busy */
     }
+    // a local track ends when its voice disappears — but only after it appeared
+    if (libVoice !== null) {
+      if (voices.some((v) => v.id === libVoice)) {
+        libSeen = true;
+      } else if (libSeen) {
+        libSeen = false;
+        libVoice = null;
+        if (libIndex + 1 < libQueue.length) void playLibAt(libIndex + 1);
+        else stopLib();
+      }
+    }
   }
 
   onMount(() => {
@@ -522,6 +719,7 @@
         theme = p.theme ?? theme;
         companion = p.companion ?? companion;
         denoise = p.denoise ?? denoise;
+        discord = p.discord ?? discord;
         lastfmUser = p.lastfmUser ?? lastfmUser;
         lastfmTag = p.lastfmTag ?? lastfmTag;
         // The key used to live here in plain text. Move it to the backend's secret
@@ -631,9 +829,9 @@
 <main>
   <header class="topbar">
     <div class="brand">
-      <img class="logo" src="/icon.png" alt="Kakiri" />
+      <img class="logo" src="/icon.png" alt="Wagmify" />
       <div class="titles">
-        <strong>Kakiri</strong>
+        <strong>Wagmify</strong>
         <span class="sub">{mic?.present ? mic.source : "no virtual mic"}</span>
       </div>
       <span class="dot" class:ok={mic?.present}></span>
@@ -773,6 +971,17 @@
     </div>
   {/if}
 
+  <!-- Online stays mounted and is only hidden: unmounting it lost the queue,
+       the playing row and auto-advance while the audio kept playing -->
+  <div class="online-host" class:off={view !== "online"}>
+    <Online
+      onSettings={() => (view = "settings")}
+      onChanged={() => void refreshLibrary()}
+      onNowPlaying={(n) => (onlineNow = n)}
+      onApi={(api) => (onlineApi = api)}
+    />
+  </div>
+
   {#if view === "library"}
   <div class="layout">
     <aside class="sidebar">
@@ -822,7 +1031,7 @@
         <h3>{searchHits.length} result{searchHits.length === 1 ? "" : "s"}</h3>
         <div class="grid">
           {#each searchHits as s (s.id)}
-            <SoundCard {s} {play} {preview} {fmtDur} />
+            <SoundCard {s} {play} {preview} {fmtDur} player={playAsTrack} />
           {/each}
         </div>
       {:else if selected}
@@ -846,7 +1055,7 @@
         {/if}
         <div class="grid">
           {#each selected.sounds as s (s.id)}
-            <SoundCard {s} {play} {preview} {fmtDur} />
+            <SoundCard {s} {play} {preview} {fmtDur} player={playAsTrack} />
           {/each}
         </div>
       {:else}
@@ -855,7 +1064,7 @@
     </section>
   </div>
   {:else if view === "online"}
-    <Online onSettings={() => (view = "settings")} onChanged={() => void refreshLibrary()} />
+      <!-- Online is mounted above and only hidden, never unmounted -->
   {:else if view === "pads"}
     <Pads sounds={allLibSounds} play={playPath} />
   {:else if view === "timeline"}
@@ -870,6 +1079,12 @@
       onInstallMic={installMic}
       onRemoveMic={removeMic}
       {companion}
+      {discord}
+      {discordOk}
+      onDiscord={(v) => {
+        discord = v;
+        savePrefs();
+      }}
       onCompanion={(v) => {
         companion = v;
         savePrefs();
@@ -903,6 +1118,20 @@
     />
   {/if}
 
+
+  {#if update}
+    <Update
+      version={update.version}
+      notes={update.notes}
+      url={update.url}
+      onLater={() => {
+        const prefs = JSON.parse(localStorage.getItem(LS_PREFS) ?? "{}");
+        localStorage.setItem(LS_PREFS, JSON.stringify({ ...prefs, updateSkipped: update?.version }));
+        update = null;
+      }}
+    />
+  {/if}
+
   {#if importOpen}
     <Import
       dest={selected?.path ?? roots[0] ?? ""}
@@ -911,6 +1140,26 @@
       onConsumed={() => (pendingFiles = [])}
       onDone={onImported}
       onClose={() => (importOpen = false)}
+    />
+  {/if}
+
+  {#if view !== "online" && (barTrack || libTrack)}
+    <MiniPlayer
+      track={barTrack ?? libTrack}
+      count={voices.length}
+      label={voices[0]?.label ?? ""}
+      progress={barTrack ? (onlineVoice?.progress ?? 0) : libProgress}
+      paused={barTrack ? !!onlineNow?.paused : libPaused}
+      saved={!!onlineNow?.saved}
+      onToggle={() => (barTrack ? void onlineApi?.toggle() : void toggleLibPause())}
+      onStop={() => (barTrack ? void onlineApi?.stop() : stopLib())}
+      onSeek={(f) => {
+        if (barTrack) void onlineApi?.seek(f);
+        else if (libVoice !== null) void invoke("seek_voice", { id: libVoice, position: f }).catch(() => {});
+      }}
+      onOpen={() => (view = "online")}
+      onPrev={barTrack ? null : () => void playLibAt(libIndex - 1)}
+      onNext={barTrack ? null : () => void playLibAt(libIndex + 1)}
     />
   {/if}
 
@@ -974,6 +1223,9 @@
 </main>
 
 <style>
+  /* contents = the child lays out exactly as before; off = gone but alive */
+  .online-host { display: contents; }
+  .online-host.off { display: none; }
   :global(:root) {
     --bg: #0e0b16;
     --panel: #171226;
@@ -1000,7 +1252,7 @@
     --text: #e7e9ea;
     --text-2: #c7cbd0;
     --muted: #71767b;
-    /* keep the Kakiri violet accent instead of X blue */
+    /* keep the Wagmify violet accent instead of X blue */
     --accent: #8b5cf6;
     --accent-2: #b79bff;
     --accent-dim: #2e2350;

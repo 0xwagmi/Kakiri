@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Kakiri",
-  "version": "0.1.6",
-  "identifier": "com.kakiri.soundboard",
+  "productName": "Wagmify",
+  "version": "0.2.0",
+  "identifier": "com.wagmify.soundboard",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Kakiri",
+        "title": "Wagmify",
         "width": 900,
         "height": 700
       }
@@ -32,17 +32,17 @@
       "icons/icon.ico"
     ],
     "publisher": "0xwagmi",
-    "homepage": "https://github.com/0xwagmi/Kakiri",
+    "homepage": "https://github.com/0xwagmi/Wagmify",
     "category": "Music",
     "shortDescription": "Play sounds through a virtual microphone in Discord",
-    "longDescription": "Kakiri mixes sound effects and music into a virtual microphone so Discord hears them as your voice, while your real microphone is mixed in so you can keep talking. Library, hotkey pads, a timeline arranger and file/video/link import.",
+    "longDescription": "Wagmify mixes sound effects and music into a virtual microphone so Discord hears them as your voice, while your real microphone is mixed in so you can keep talking. Library, hotkey pads, a timeline arranger and file/video/link import.",
     "linux": {
       "deb": {
         "depends": [
           "pipewire"
         ],
         "files": {
-          "usr/share/metainfo/com.kakiri.soundboard.metainfo.xml": "metainfo/com.kakiri.soundboard.metainfo.xml"
+          "usr/share/metainfo/com.wagmify.soundboard.metainfo.xml": "metainfo/com.wagmify.soundboard.metainfo.xml"
         }
       },
       "rpm": {
@@ -50,7 +50,7 @@
           "pipewire"
         ],
         "files": {
-          "/usr/share/metainfo/com.kakiri.soundboard.metainfo.xml": "metainfo/com.kakiri.soundboard.metainfo.xml"
+          "/usr/share/metainfo/com.wagmify.soundboard.metainfo.xml": "metainfo/com.wagmify.soundboard.metainfo.xml"
         }
       }
     }

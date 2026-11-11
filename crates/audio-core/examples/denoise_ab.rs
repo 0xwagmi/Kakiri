@@ -53,6 +53,6 @@ fn main() {
     println!("  denoised: {:.1} dBFS", rms_db(&out[skip..]));
     println!("  change  : {:.1} dB", rms_db(&out[skip..]) - rms_db(&input[skip..]));
     if vad_n > 0 {
-        println!("  vad     : mean {:.2}, max {:.2}  (threshold is KAKIRI_VAD_THRES/100)", vad_sum / vad_n as f64, vad_max);
+        println!("  vad     : mean {:.2}, max {:.2}  (threshold is WAGMIFY_VAD_THRES/100)", vad_sum / vad_n as f64, vad_max);
     }
 }

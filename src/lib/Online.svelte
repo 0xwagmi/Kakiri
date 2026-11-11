@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+
+  import CatMark from "./CatMark.svelte";
   import { invoke } from "@tauri-apps/api/core";
   import {
     Search,
@@ -16,6 +18,7 @@
     Music,
     ListMusic,
     Download,
+      Bookmark,
     Check,
     Trash2,
     History,
@@ -45,6 +48,29 @@
   export let onSettings: () => void = () => {};
   /** tell the app a library file appeared or went away, so it can rescan */
   export let onChanged: () => void = () => {};
+  /** The player's controls, handed up so the app-wide bar stops the track the same
+      way this view does (calling `stop_voice` directly looked like a track ending,
+      and the watcher advanced the queue). */
+  export let onApi: (api: {
+    toggle: () => Promise<void>;
+    stop: () => Promise<void>;
+    seek: (fraction: number) => Promise<void>;
+  }) => void = () => {};
+
+  /** Reports what is on the voice, for the Discord presence. */
+  export let onNowPlaying: (
+    n: {
+      title: string;
+      artist: string;
+      started: number | null;
+      ends: number | null;
+      artwork: string | null;
+      paused: boolean;
+      /** engine voice, so the app-wide bar can pause or stop it */
+      id: number | null;
+      saved: boolean;
+    } | null,
+  ) => void = () => {};
 
   const LS_PREFS = "sb.prefs";
   const LS_RECENT = "sb.recent";
@@ -65,6 +91,20 @@
   let rows: Track[] = [];
   let loading = true;
   let error = "";
+  let errorHint = "";
+  let errorFix: "settings" | "" = "";
+
+  function fail(text: string, hint = "", fix: "settings" | "" = "") {
+    error = text;
+    errorHint = hint;
+    errorFix = fix;
+  }
+
+  function clearError() {
+    error = "";
+    errorHint = "";
+    errorFix = "";
+  }
   let query = "";
   let searchActive = false;
 
@@ -91,6 +131,10 @@
   let shuffle = false;
   let repeat = false;
   let paused = false;
+  /** unix seconds the current track began, offset by any seeking */
+  let startedAt: number | null = null;
+  /** and when it will end, so Discord can show the same bar Spotify does */
+  let endsAt: number | null = null;
   let progress = 0; // 0..1 of the current track
   /** how much of the current track is on disk, so Save can show it filling */
   let cachedBytes = 0;
@@ -127,6 +171,11 @@
       string equality would stop recognising a track as already saved. */
   const loose = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "");
   $: savedKeys = new Set(saved.map((t) => loose(`${t.artist}${t.title}`)));
+  /** Saved state as a *reactive* expression. Calling a plain function from the
+      template hid the dependency, so a finished save never repainted the button. */
+  const keyOf = (t: Track) => loose(`${t.artist}${t.title}`);
+  $: heroKept = !!hero && savedKeys.has(keyOf(hero));
+  $: barKept = !!current && savedKeys.has(keyOf(current));
   const isSaved = (t: Track) => savedKeys.has(loose(`${t.artist}${t.title}`));
 
   $: subtitle =
@@ -209,7 +258,7 @@
   function failure(e: unknown): string {
     const msg = String(e);
     if (msg.includes("invoke") || msg.includes("__TAURI")) {
-      return "This page is open in a browser — the player only runs inside the Kakiri app.";
+      return "This is the browser preview. The player only runs inside Wagmify.";
     }
     return msg.replace(/^Error:\s*/, "");
   }
@@ -217,7 +266,7 @@
   async function open(c: Collection) {
     collection = c;
     searchActive = false;
-    error = "";
+    clearError();
     if (c.kind === "recent") {
       rows = recent;
       loading = false;
@@ -232,13 +281,17 @@
     if (c.kind === "loved" && (!lfKey || !lfUser)) {
       rows = [];
       loading = false;
-      error = "Add your Last.fm API key and username in Settings first.";
+      fail(
+        "No Last.fm key yet.",
+        "Make an app at last.fm/api, then paste the key and your username in Settings.",
+        "settings",
+      );
       return;
     }
     if (c.kind === "tag" && !lfKey) {
       rows = [];
       loading = false;
-      error = "Add a Last.fm API key in Settings to play tag stations.";
+      fail("Tag stations need Last.fm.", "Add your key in Settings.", "settings");
       return;
     }
     if (!inTauri) {
@@ -254,7 +307,9 @@
           : c.kind === "loved"
             ? await invoke<Track[]>("online_loved", { user: lfUser, apiKey: lfKey })
             : await invoke<Track[]>("online_tag", { tag: c.tag, apiKey: lfKey });
-      if (!rows.length) error = "Nothing came back for that.";
+      if (!rows.length) {
+        fail("Nothing came back for that.", "The list is private, or you haven't loved anything yet.");
+      }
     } catch (e) {
       error = failure(e);
       rows = [];
@@ -268,11 +323,13 @@
     if (!q) return closeSearch();
     if (!inTauri) return;
     loading = true;
-    error = "";
+    clearError();
     searchActive = true;
     try {
       rows = await invoke<Track[]>("online_search", { query: q, limit: 40 });
-      if (!rows.length) error = "Nothing matched that search.";
+      if (!rows.length) {
+        fail("No match for that.", "Try a shorter search.");
+      }
     } catch (e) {
       error = failure(e);
       rows = [];
@@ -380,7 +437,7 @@
         return;
       }
       if (typeof v.id === "number") voiceId = v.id;
-      error = "";
+      clearError();
     } catch (e) {
       if (mine === seq) {
         error = failure(e);
@@ -417,6 +474,22 @@
     await startTrack(prevTrack);
   }
 
+  // Discord only needs the headline facts, and only when they change.
+  $: onNowPlaying(
+    current
+      ? {
+          title: current.title,
+          artist: current.artist ?? "",
+          started: paused ? null : startedAt,
+          ends: paused ? null : endsAt,
+          artwork: current.artwork,
+          paused,
+          id: voiceId,
+          saved: savedKeys.has(keyOf(current)),
+        }
+      : null,
+  );
+
   /** Pause keeps the position: the voice stays in the engine, silent. */
   async function togglePause() {
     if (voiceId === null) return;
@@ -428,6 +501,22 @@
     }
   }
 
+    /** Jump to a fraction of the track, whatever the caller knows about events. */
+    async function seekTo(f: number) {
+      if (voiceId === null || !current) return;
+      progress = f;
+      const now = Math.floor(Date.now() / 1000);
+      if (current.duration > 0) {
+        startedAt = now;
+        endsAt = now + Math.round(current.duration * (1 - f));
+      }
+      try {
+        await invoke("seek_voice", { id: voiceId, position: f });
+      } catch {
+        /* engine busy; the poll will resync */
+      }
+    }
+
   /** Click anywhere on the progress line to jump there. */
   async function seekAt(ev: MouseEvent) {
     if (voiceId === null || !current) return;
@@ -435,6 +524,11 @@
     const rect = el.getBoundingClientRect();
     const f = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
     progress = f;
+    const now = Math.floor(Date.now() / 1000);
+    if (current.duration > 0) {
+      startedAt = now;
+      endsAt = now + Math.round(current.duration * (1 - f));
+    }
     try {
       await invoke("seek_voice", { id: voiceId, position: f });
     } catch {
@@ -456,7 +550,7 @@
     if (savingKey || isSaved(t)) return;
     const key = `${t.artist}\u0000${t.title}`;
     savingKey = key;
-    error = "";
+    clearError();
     try {
       const got = await invoke<{ path: string; duration_secs: number }>("save_online", {
         artist: t.artist,
@@ -597,7 +691,7 @@
     const entry = saved.find((s) => trackKey(s) === key);
     const path = t.path ?? entry?.path;
     if (!path) {
-      error = "Could not tell which file to delete — rescan the Saved list.";
+      error = "Don't know which file to delete. Rescan the saved list.";
       return false;
     }
     if (path) {
@@ -650,6 +744,7 @@
 
   onMount(() => {
     readPrefs();
+    onApi({ toggle: togglePause, stop, seek: seekTo });
     // credentials come from the backend's private store
     invoke<string | null>("secret_get", { name: "lastfm.key" })
       .then((k) => {
@@ -755,14 +850,21 @@
       <div class="notice">
         <TriangleAlert size={14} />
         <div>
-          <strong>Open this in the Kakiri window, not a browser.</strong>
+          <strong>Open this in the Wagmify window, not a browser.</strong>
           <p>The player needs the app's audio engine — a browser tab has none.</p>
         </div>
       </div>
     {/if}
 
     {#if error}
-      <div class="notice soft"><TriangleAlert size={14} /><p>{error}</p></div>
+      <div class="empty">
+        <CatMark size={68} />
+        <p class="empty-title">{error}</p>
+        {#if errorHint}<p class="empty-hint">{errorHint}</p>{/if}
+        {#if errorFix === "settings"}
+          <button class="ghost" onclick={() => onSettings()}>Open Settings</button>
+        {/if}
+      </div>
     {/if}
 
     {#if loading}
@@ -809,13 +911,13 @@
           </span>
           <span class="hero-play"><Play size={18} /></span>
         </button>
-        {#if !isSaved(hero) && hero.source !== "saved"}
+        {#if !heroKept && hero.source !== "saved"}
           <button
             class="hero-save"
             class:ready={current?.id === hero.id && currentCached}
             onclick={() => void save(hero)}
             title={current?.id === hero.id && currentCached
-              ? "Already cached — saving is instant"
+              ? "Cached, so saving is instant"
               : "Save to your library"}
           >
             {#if current?.id === hero.id}
@@ -859,6 +961,7 @@
             <span class="c-act"></span>
           </div>
           {#each tableRows as t, i (t.id)}
+            {@const kept = savedKeys.has(keyOf(t))}
             <div class="trow" class:playing={current?.id === t.id} class:picked={compact && selected.includes(trackKey(t))}>
               <span class="c-num">
                 {#if compact}
@@ -887,35 +990,30 @@
               </span>
               <span class="c-dur">{fmt(t.duration)}</span>
               <span class="c-act">
-                {#if isSaved(t)}
-                  <button
-                    class="row-save saved"
-                    onclick={() => askDelete([t])}
-                    title="Remove from your library"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                {:else}
-                  <button
-                    class="row-save"
-                    class:saved={isSaved(t)}
-                    onclick={() => void save(t)}
-                    disabled={savingKey === `${t.artist}\u0000${t.title}`}
-                    title={isSaved(t)
-                      ? "Saved to your library"
-                      : current?.id === t.id && currentCached
-                        ? "Already cached — saving is instant"
+                  {#if kept}
+                    <button
+                      class="row-save"
+                      onclick={() => askDelete([t])}
+                      title="Remove from your library"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  {:else}
+                    <button
+                      class="row-save"
+                      onclick={() => void save(t)}
+                      disabled={savingKey === `${t.artist}\u0000${t.title}`}
+                      title={current?.id === t.id && currentCached
+                        ? "Cached, so saving is instant"
                         : "Save to your library"}
-                  >
-                    {#if isSaved(t)}
-                      <Check size={12} />
-                    {:else if savingKey === `${t.artist}\u0000${t.title}`}
-                      <span class="dot-busy"></span>
-                    {:else}
-                      <Download size={12} />
-                    {/if}
-                  </button>
-                {/if}
+                    >
+                      {#if savingKey === `${t.artist}\u0000${t.title}`}
+                        <span class="dot-busy"></span>
+                      {:else}
+                        <Download size={12} />
+                      {/if}
+                    </button>
+                  {/if}
                 <button
                   class="row-play"
                   onclick={() => (current?.id === t.id ? void togglePause() : void play(i + tableBase))}
@@ -931,7 +1029,7 @@
     {:else if !error}
       <div class="empty">
         <ListMusic size={22} />
-        <p>{collection.kind === "recent" ? "Nothing played yet — it fills up as you listen." : "Nothing to show yet."}</p>
+        <p>{collection.kind === "recent" ? "Nothing played yet. It fills up as you listen." : "Nothing here yet."}</p>
       </div>
     {/if}
   </main>
@@ -947,10 +1045,10 @@
         <p class="dlg-body">
           {#if pendingDelete.length === 1}
             <strong>{pendingDelete[0].artist} — {pendingDelete[0].title}</strong>
-            will be deleted from <code>Music/Kakiri/Online</code>.
+            will be deleted from <code>Music/Wagmify/Online</code>.
           {:else}
             These {pendingDelete.length} files will be deleted from
-            <code>Music/Kakiri/Online</code>:
+            <code>Music/Wagmify/Online</code>:
           {/if}
         </p>
         {#if pendingDelete.length > 1}
@@ -1033,14 +1131,14 @@
       </div>
 
       <div class="now-side">
-        {#if !isSaved(current) && current.source !== "saved"}
+        {#if !barKept && current.source !== "saved"}
           <button
             class="now-save"
             class:ready={currentCached}
             onclick={() => void save(current)}
             disabled={savingKey !== null}
             title={currentCached
-              ? "Cached — saving is a local copy, no download"
+              ? "Cached: saving is a local copy, no download"
               : "Save to your library (downloading as it plays)"}
           >
             <span class="now-save-fill" style="height:{cachePct}%"></span>
@@ -1048,17 +1146,17 @@
               {#if savingKey !== null}
                 <span class="dot-busy"></span> Saving…
               {:else if currentCached}
-                <Download size={10} /> Save
+                <Bookmark size={10} /> Save
                 <span class="now-save-size">{mb(totalBytes)}</span>
               {:else}
-                <Download size={10} /> Save
+                <Bookmark size={10} /> Save
                 <span class="now-save-size">{mb(cachedBytes)} / {mb(totalBytes)}</span>
               {/if}
             </span>
           </button>
         {:else}
           <button class="now-saved" onclick={() => askDelete([current])} title="Remove from your library">
-            <Check size={11} /> Saved
+            <Bookmark size={11} fill="currentColor" /> Saved
           </button>
         {/if}
         <button class="icon" class:on={shuffle} onclick={() => (shuffle = !shuffle)} title="Shuffle">
@@ -1068,7 +1166,7 @@
           <Repeat size={13} />
         </button>
         <button class="icon" onclick={() => void stop()} title="Stop">
-          <Square size={12} />
+          <Square size={12} fill="currentColor" stroke-width={0} />
         </button>
       </div>
     </div>
@@ -1209,7 +1307,36 @@
     font-size: 12.5px;
     color: var(--text-2);
   }
-  .notice.soft { background: none; padding: 0 2px; color: var(--warn, #e0a33e); }
+  /* Nothing to show: the cat, one plain sentence, and a way forward */
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 10px;
+    padding: 44px 24px 56px;
+    max-width: 380px;
+    margin: 0 auto;
+  }
+  .empty-title {
+    margin: 6px 0 0;
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.01em;
+  }
+  .empty-hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-3);
+  }
+  .empty button { margin-top: 8px; }
+  .empty :global(svg) { opacity: 0.95; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .empty :global(svg) { animation: none; }
+  }
   .notice strong { display: block; color: var(--text); font-size: 13px; font-weight: 600; }
   .notice p { margin: 3px 0 0; color: var(--text-3); }
 
@@ -1406,9 +1533,8 @@
     cursor: pointer;
     opacity: 0;
   }
-  .trow:hover .row-save, .row-save.saved { opacity: 1; }
+  .trow:hover .row-save { opacity: 1; }
   .row-save:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--line, rgb(255 255 255 / 0.1)); }
-  .row-save.saved { color: var(--accent, #8b7bff); }
   .row-save:disabled { opacity: 0.6; cursor: default; }
   .dot-busy {
     width: 9px;

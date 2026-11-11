@@ -15,7 +15,9 @@ use audio_core::input::AudioInput;
 use audio_core::library::Folder;
 pub mod download;
 pub mod online;
+pub mod presence;
 pub mod secrets;
+pub mod update;
 use audio_core::mixer::{Retrigger, Route, VoiceInfo};
 use audio_core::output::AudioOutput;
 use audio_core::timeline::{Clip, TimelineStatus};
@@ -170,7 +172,7 @@ async fn create_virtual_mic() -> Result<MicStatus, String> {
 }
 
 /// Install a PipeWire drop-in so the virtual mic is created by the daemon from
-/// boot on, and survives Kakiri quitting. (Windows/macOS: not supported.)
+/// boot on, and survives Wagmify quitting. (Windows/macOS: not supported.)
 #[tauri::command]
 async fn install_virtual_mic() -> Result<MicStatus, String> {
     tauri::async_runtime::spawn_blocking(virtualmic::install_persistent)
@@ -305,14 +307,40 @@ fn default_roots() -> Vec<String> {
     }
 }
 
-/// Where imports go when the library has no folders yet: `~/Music/Kakiri`,
+/// The app used to be called Kakiri: move its folders over once, so a rename does
+/// not look like "all my sounds are gone".
+fn migrate_old_name(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    for (get, old) in [
+        (app.path().app_local_data_dir().ok(), "com.kakiri.soundboard"),
+        (app.path().app_cache_dir().ok(), "com.kakiri.soundboard"),
+    ] {
+        let Some(new) = get else { continue };
+        let Some(parent) = new.parent() else { continue };
+        let old_dir = parent.join(old);
+        if old_dir.is_dir() && !new.exists() {
+            let _ = std::fs::rename(&old_dir, &new);
+        }
+    }
+
+    // the library folder moved from Music/Kakiri to Music/Wagmify
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        let music = std::path::PathBuf::from(home).join("Music");
+        let (old, new) = (music.join("Kakiri"), music.join("Wagmify"));
+        if old.is_dir() && !new.exists() {
+            let _ = std::fs::rename(&old, &new);
+        }
+    }
+}
+
+/// Where imports go when the library has no folders yet: `~/Music/Wagmify`,
 /// created on demand so a fresh install can still take a dropped file.
 #[tauri::command]
 fn import_default_folder() -> Result<String, String> {
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .ok_or("cannot find your home folder")?;
-    let dir = PathBuf::from(home).join("Music").join("Kakiri");
+    let dir = PathBuf::from(home).join("Music").join("Wagmify");
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     Ok(dir.display().to_string())
 }
@@ -414,9 +442,11 @@ static LINK_CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, (St
 /// Resolve a page URL to a direct audio stream plus a title, without downloading.
 fn resolve_link(url: &str) -> Result<(String, String), String> {
     let (bin, _version) = crate::download::ytdlp().ok_or_else(|| {
-        "yt-dlp is missing — open Import once to let Kakiri fetch it".to_string()
+        "yt-dlp is missing — open Import once to let Wagmify fetch it".to_string()
     })?;
-    let out = std::process::Command::new(bin)
+    let mut cmd = std::process::Command::new(bin);
+    audio_core::proc::quiet(&mut cmd);
+    let out = cmd
         .args([
             "-f",
             // symphonia decodes AAC/mp4 out of the box; opus/webm it does not
@@ -773,10 +803,12 @@ fn search_and_resolve(
     n: u32,
 ) -> Result<Vec<Candidate>, String> {
     let (bin, _) = crate::download::ytdlp().ok_or_else(|| {
-        "yt-dlp is missing — open Import once to let Kakiri fetch it".to_string()
+        "yt-dlp is missing — open Import once to let Wagmify fetch it".to_string()
     })?;
     let query = format!("ytsearch{n}:{artist} {title}");
-    let out = std::process::Command::new(bin)
+    let mut cmd = std::process::Command::new(bin);
+    audio_core::proc::quiet(&mut cmd);
+    let out = cmd
         .args([
             "-f",
             "bestaudio[ext=m4a]/bestaudio",
@@ -817,6 +849,27 @@ async fn play_online(
     let handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let key = format!("online:{artist} - {title}");
+        let label = format!("{artist} — {title}");
+
+        // On disk already? Play the file instead of resolving a URL: asking
+        // yt-dlp first cost ~5 seconds of "buffering" over audio we already had.
+        // A saved file is the strongest case — it is not going to be evicted.
+        let local = saved_file(&artist, &title)
+            .or_else(|| cache.clone().filter(|p| audio_core::http::is_complete(p)));
+        if let Some(path) = local {
+            let id = engine.play_stream_from(
+                key.clone(),
+                label.clone(),
+                path.clone(),
+                gain,
+                false,
+                Route::Both,
+                0.0,
+            )
+            .map_err(|e| format!("could not play the cached track: {e}"))?;
+            return Ok(LinkVoice { id, title: label, buffered_ms: 0 });
+        }
+
         if let Some((_t, url)) = link_cache_get(&key) {
             let (id, took) = engine
                 .play_url_stream(
@@ -915,6 +968,15 @@ fn safe_name(s: &str) -> String {
         .to_string()
 }
 
+/// A track the user saved: a real file in the Online folder, which outlives the
+/// LRU cache. Playing it never needs the network.
+fn saved_file(artist: &str, title: &str) -> Option<std::path::PathBuf> {
+    let dir = std::path::PathBuf::from(import_default_folder().ok()?).join("Online");
+    let name = safe_name(&format!("{artist} - {title}"));
+    let path = dir.join(format!("{name}.m4a"));
+    path.is_file().then_some(path)
+}
+
 /// Put an already-cached track into the library: no network, just a copy.
 fn copy_cached(cache: &std::path::Path, artist: &str, title: &str) -> Result<audio_core::import::Imported, String> {
     let base = std::path::PathBuf::from(import_default_folder()?);
@@ -963,7 +1025,7 @@ async fn online_saved() -> Result<Vec<SavedTrack>, String> {
             .filter_map(|e| {
                 let path = e.path();
                 let file_name = path.file_name()?.to_str()?.to_string();
-                // yt-dlp leaves `.kakiri-….m4a` and `*.part` files mid-download
+                // yt-dlp leaves `.wagmify-….m4a` and `*.part` files mid-download
                 if file_name.starts_with('.') || file_name.ends_with(".part") {
                     return None;
                 }
@@ -1032,6 +1094,41 @@ async fn online_lookup(artist: String, title: String) -> Result<Option<Lookup>, 
     .map_err(|e| e.to_string())?
 }
 
+/// Show (or stop showing) what Wagmify is doing in the Discord member list.
+/// Passing nothing clears the presence; the toggle in Settings decides whether
+/// the frontend ever calls this with a value.
+#[tauri::command]
+fn presence_set(
+    details: Option<String>,
+    state: Option<String>,
+    started: Option<i64>,
+    ends: Option<i64>,
+    image: Option<String>,
+) -> bool {
+    crate::presence::show(details.map(|details| crate::presence::Now {
+        details,
+        state: state.unwrap_or_default(),
+        started,
+        ends,
+        image: image.filter(|i| !i.is_empty()),
+    }));
+    crate::presence::connected()
+}
+
+/// Is there a newer release? `None` covers both "you are current" and "could not
+/// ask", because neither should interrupt anyone.
+#[tauri::command]
+async fn update_check() -> Option<crate::update::Update> {
+    tauri::async_runtime::spawn_blocking(crate::update::check).await.ok().flatten()
+}
+
+/// Whether the Discord socket is up, so Settings can say why nothing shows yet.
+/// Connecting happens on a worker thread, so this is polled rather than awaited.
+#[tauri::command]
+fn presence_connected() -> bool {
+    crate::presence::connected()
+}
+
 /// Last.fm credentials live in a private file, not in `sb.prefs`: `localStorage`
 /// is a plaintext key-value store shared with every other setting.
 #[tauri::command]
@@ -1046,7 +1143,7 @@ fn secret_set(app: tauri::AppHandle, name: String, value: String) -> Result<(), 
 
 /// Remove a saved track from the library.
 ///
-/// Deliberately narrow: only files inside `~/Music/Kakiri/Online` can be deleted,
+/// Deliberately narrow: only files inside `~/Music/Wagmify/Online` can be deleted,
 /// so a stale UI entry can never take something else with it. The track cache is
 /// separate and is left alone — it is evicted on its own schedule.
 #[tauri::command]
@@ -1116,6 +1213,18 @@ async fn save_online(
     let job = job.unwrap_or_else(|| format!("save-{artist}-{title}"));
     let app2 = app.clone();
     let job2 = job.clone();
+
+    // saved before? hand back the file we have rather than writing it twice
+    if let Some(existing) = saved_file(&artist, &title) {
+        write_meta(&existing, &artist, &title, artwork.as_deref());
+        let name = existing.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        return Ok(audio_core::import::Imported {
+            duration_secs: audio_core::tags::duration_secs(&existing).unwrap_or(0.0),
+            path: existing.display().to_string(),
+            name,
+            converted: false,
+        });
+    }
 
     // already streamed through once? then "saving" is a local copy, not a download
     if let Some(cache) = track_cache_path(&app, &format!("online:{artist} - {title}")) {
@@ -1288,7 +1397,7 @@ mod link_tests {
 
     #[test]
     fn saved_metadata_survives_a_round_trip() {
-        let dir = std::env::temp_dir().join("kakiri-meta-test");
+        let dir = std::env::temp_dir().join("wagmify-meta-test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         // the import pipeline names files "Title - Artist"; the sidecar must win
@@ -1305,7 +1414,7 @@ mod link_tests {
 
     #[test]
     fn unsave_refuses_anything_outside_the_online_folder() {
-        let dir = std::env::temp_dir().join("kakiri-unsave-test");
+        let dir = std::env::temp_dir().join("wagmify-unsave-test");
         let inside = dir.join("Online");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&inside).unwrap();
@@ -1664,18 +1773,18 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::Manager;
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
-    let show = MenuItem::with_id(app, "show", "Show Kakiri", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Kakiri", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Show Wagmify", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Wagmify", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&show, &sep, &quit])?;
 
-    TrayIconBuilder::with_id("kakiri-tray")
+    TrayIconBuilder::with_id("wagmify-tray")
         .icon(tauri::image::Image::from_bytes(include_bytes!(
             "../icons/tray-white.png"
         ))?)
         // macOS renders "template" icons in the menu bar's own colour
         .icon_as_template(true)
-        .tooltip("Kakiri")
+        .tooltip("Wagmify")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -1698,7 +1807,7 @@ fn setup_tray(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(window) = app.get_webview_window("main") {
         hide_on_close(&window)?;
     }
-    log::info!("tray icon ready; closing the window keeps Kakiri running");
+    log::info!("tray icon ready; closing the window keeps Wagmify running");
     Ok(())
 }
 
@@ -1728,13 +1837,13 @@ pub fn run() {
         // Everything audio-core logs (device errors, timeline failures) plus
         // panics lands in <app data>/logs, so a user can send one file.
         .plugin(
-            // This file is for Kakiri's own diagnostics, not the decoder's
+            // This file is for Wagmify's own diagnostics, not the decoder's
             // internals: symphonia emits a warning per file it probes, which
             // buried everything else. Third-party crates log errors only.
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Error)
                 .level_for("audio_core", log::LevelFilter::Info)
-                .level_for("soundboard_lib", log::LevelFilter::Info)
+                .level_for("wagmify_lib", log::LevelFilter::Info)
                 // the builder already has default targets; replace them so each
                 // record is written once instead of twice
                 .clear_targets()
@@ -1760,6 +1869,7 @@ pub fn run() {
         )
         .setup(|app| {
             use tauri::Manager;
+            migrate_old_name(app.handle());
             // Where a downloader fetched by the import panel lives.
             if let Ok(dir) = app.path().app_local_data_dir() {
                 download::set_tools_dir(dir.join("tools"));
@@ -1773,7 +1883,7 @@ pub fn run() {
             // record what the app started with.
             let backend = if cfg!(target_os = "linux") { "pipewire" } else { "cpal" };
             log::info!(
-                "Kakiri {} starting ({backend} backend, bus {} Hz / {} ch)",
+                "Wagmify {} starting ({backend} backend, bus {} Hz / {} ch)",
                 env!("CARGO_PKG_VERSION"),
                 fmt.rate,
                 fmt.channels
@@ -1824,6 +1934,9 @@ pub fn run() {
             online_video_url,
             save_online,
             unsave_online,
+            update_check,
+            presence_set,
+            presence_connected,
             secret_get,
             secret_set,
             online_saved,

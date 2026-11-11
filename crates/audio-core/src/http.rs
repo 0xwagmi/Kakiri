@@ -234,7 +234,7 @@ impl CacheHandle {
         use std::sync::atomic::Ordering;
         let Ok(client) = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
-            .user_agent("Kakiri")
+            .user_agent("Wagmify")
             .build()
         else {
             return;
@@ -288,7 +288,7 @@ impl HttpSource {
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(8))
             // these CDNs dislike a missing UA
-            .user_agent("Kakiri")
+            .user_agent("Wagmify")
             .build()
             .context("http client")?;
 
@@ -427,7 +427,7 @@ mod tests {
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("kakiri-cache-test-{name}"));
+        let dir = std::env::temp_dir().join(format!("wagmify-cache-test-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("track.m4a")

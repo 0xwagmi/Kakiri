@@ -83,7 +83,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ inputs.tag || github.ref_name }}
-          releaseName: "Kakiri ${{ inputs.tag || github.ref_name }}"
+          releaseName: "Wagmify ${{ inputs.tag || github.ref_name }}"
           # v0.x and any "-alpha/-beta/-rc" tag stay marked as a pre-release, so
           # the repository's "Latest" badge is only claimed by a real 1.0.
           prerelease: ${{ startsWith(inputs.tag || github.ref_name, 'v0.') || contains(inputs.tag || github.ref_name, '-') }}
@@ -93,9 +93,9 @@ jobs:
 
             | file | who it's for | install |
             |---|---|---|
-            | `*_amd64.deb` | Ubuntu / Debian / Mint / Pop!_OS | `sudo apt install ./Kakiri_*.deb` |
-            | `*.x86_64.rpm` | Fedora / RHEL / openSUSE | `sudo dnf install ./Kakiri-*.rpm` |
-            | `*.AppImage` | anything else, no root | `chmod +x Kakiri_*.AppImage && ./Kakiri_*.AppImage` |
+            | `*_amd64.deb` | Ubuntu / Debian / Mint / Pop!_OS | `sudo apt install ./Wagmify_*.deb` |
+            | `*.x86_64.rpm` | Fedora / RHEL / openSUSE | `sudo dnf install ./Wagmify-*.rpm` |
+            | `*.AppImage` | anything else, no root | `chmod +x Wagmify_*.AppImage && ./Wagmify_*.AppImage` |
             | `*_x64-setup.exe` | Windows 10/11, x64 | run the installer, then install **VB-CABLE** |
 
             **Linux** — pick **Soundboard Mic** as your input device in Discord and
@@ -118,7 +118,7 @@ jobs:
       - name: Collect artifacts for the run page
         uses: actions/upload-artifact@v4
         with:
-          name: kakiri-linux-${{ inputs.tag || github.ref_name }}
+          name: wagmify-linux-${{ inputs.tag || github.ref_name }}
           path: |
             target/release/bundle/deb/*.deb
             target/release/bundle/rpm/*.rpm
@@ -171,14 +171,14 @@ jobs:
           # nsis only: the .msi needs WiX, and the .exe is what people expect.
           args: --bundles nsis
           tagName: ${{ inputs.tag || github.ref_name }}
-          releaseName: "Kakiri ${{ inputs.tag || github.ref_name }}"
+          releaseName: "Wagmify ${{ inputs.tag || github.ref_name }}"
           prerelease: ${{ startsWith(inputs.tag || github.ref_name, 'v0.') || contains(inputs.tag || github.ref_name, '-') }}
           draft: ${{ inputs.draft || false }}
 
       - name: Collect artifacts for the run page
         uses: actions/upload-artifact@v4
         with:
-          name: kakiri-windows-${{ inputs.tag || github.ref_name }}
+          name: wagmify-windows-${{ inputs.tag || github.ref_name }}
           path: target/release/bundle/nsis/*.exe
           if-no-files-found: error
 

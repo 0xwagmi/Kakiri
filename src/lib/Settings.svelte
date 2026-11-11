@@ -3,6 +3,8 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
+
+  import { CircleHelp } from "$lib/icons";
   import { THEMES } from "$lib/themes";
 
   export let theme: string;
@@ -14,6 +16,9 @@
   export let onRemoveMic: () => void = () => {};
   export let companion = true;
   export let onCompanion: (v: boolean) => void = () => {};
+  export let discord = false;
+  export let onDiscord: (v: boolean) => void = () => {};
+  export let discordOk = true;
   export let lastfmKey = "";
   export let lastfmUser = "";
   export let onLastfm: (key: string, user: string) => void = () => {};
@@ -33,6 +38,9 @@
   let showKey = false;
   let showUser = false;
   let secretState = "";
+  /** the "?" toggles: explanation on demand instead of a wall of text */
+  let helpOnline = false;
+  let helpDiscord = false;
 
   // the key is a credential: it lives in the backend's private store, not in prefs
   onMount(async () => {
@@ -67,19 +75,31 @@
 
 <div class="settings">
   <section>
-    <h2>Online</h2>
-    <p class="muted">
-      Charts and search work without an account. A Last.fm key adds your loved tracks and tag
-      stations — create one at
-      <button class="inline" onclick={() => openUrl("https://www.last.fm/api/account/create")}
-        >last.fm/api</button
-      >, then paste it here. Only the <em>API key</em> is needed; ignore the shared secret.
-    </p>
-    <p class="muted small">
-      Stored locally, obfuscated, in Kakiri's own data folder — <em>not</em> in your settings
-      file and not synced. It is not protected by the system keyring yet, so treat it like any
-      other secret on this machine.
-    </p>
+    <h2>
+      Online
+      <button
+        class="help"
+        class:on={helpOnline}
+        aria-expanded={helpOnline}
+        title="What the Last.fm key is for"
+        onclick={() => (helpOnline = !helpOnline)}
+        >
+          <CircleHelp size={13} />
+        </button>
+    </h2>
+    {#if helpOnline}
+      <p class="muted">
+        Charts and search work without an account. A key adds your loved tracks and tag stations.
+        Make one at
+        <button class="inline" onclick={() => openUrl("https://www.last.fm/api/account/create")}
+          >last.fm/api</button
+        > and paste it here. Only the <em>API key</em> is needed, not the shared secret.
+      </p>
+      <p class="muted small">
+        The key sits in its own scrambled file in Wagmify's folder, not in your settings. There is no
+        system keyring yet, so treat it like any other secret on this machine.
+      </p>
+    {/if}
     <div class="fields">
         <label>
           <span>Last.fm API key</span>
@@ -160,6 +180,41 @@
   </section>
 
   <section>
+    <h2>
+      Discord
+      <button
+        class="help"
+        class:on={helpDiscord}
+        aria-expanded={helpDiscord}
+        title="What this shows"
+        onclick={() => (helpDiscord = !helpDiscord)}
+        >
+          <CircleHelp size={13} />
+        </button>
+    </h2>
+    <div class="row">
+      <button
+        class="toggle"
+        class:on={discord}
+        role="switch"
+        aria-checked={discord}
+        onclick={() => onDiscord(!discord)}
+      >
+        <span class="track"><span class="knob"></span></span>
+        <span>{discord ? "Shown in your profile" : "Off"}</span>
+      </button>
+    </div>
+    {#if discord && !discordOk}
+      <p class="muted">Discord is closed, so nothing is showing. It appears once Discord is open.</p>
+    {:else if helpDiscord}
+      <p class="muted">
+        Your Discord profile shows the track you are playing. Wagmify talks to Discord on this
+        machine only. No account is linked and nothing is sent anywhere else.
+      </p>
+    {/if}
+  </section>
+
+  <section>
     <h2>Virtual microphone</h2>
     <div class="row" style="margin-top:10px">
       <button
@@ -175,20 +230,20 @@
     </div>
     <p class="muted">
       Cleans your voice before it reaches the virtual mic, so Discord's own suppression can stay
-      off — it would otherwise gate the sounds you play.
+      off. It would otherwise gate the sounds you play.
     </p>
     {#if !mic}
       <p class="muted">Checking…</p>
     {:else if !mic.can_manage}
       <p class="muted">
-        Kakiri can't create a virtual microphone on this platform. Install
+        Wagmify can't create a virtual microphone on this platform. Install
         <b>VB-CABLE</b> (Windows) or <b>BlackHole</b> (macOS), then choose
         <code>CABLE Input</code> / <code>BlackHole 2ch</code> as the output.
       </p>
     {:else}
       <p class="muted">
         {#if mic.present}Running{:else}Not running{/if} ·
-        {#if mic.persistent}persists across restarts{:else}temporary (stops with Kakiri){/if}.<br />
+        {#if mic.persistent}persists across restarts{:else}temporary (stops with Wagmify){/if}.<br />
         Discord should use <b>{mic.source}</b> as its input device.
       </p>
       <div class="row">
@@ -202,7 +257,7 @@
       </div>
       <p class="muted">
         Keeping it installs a PipeWire config, so the mic exists from login on and
-        Discord always has a valid input — even while Kakiri is closed. Removing it
+        Discord always has a valid input, even while Wagmify is closed. Removing it
         takes effect once PipeWire restarts.
       </p>
     {/if}
@@ -220,7 +275,7 @@
   <section>
     <h2>About</h2>
     <p class="muted">
-      <b>Kakiri Soundboard</b> — early alpha.<br />
+      <b>Wagmify Soundboard</b>, early alpha.<br />
       Audio: Linux (native PipeWire) · Windows/macOS (cpal).<br />
       MIT licensed.
     </p>
@@ -353,5 +408,31 @@
   .toggle:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 4px; border-radius: 6px; }
   .ok { color: var(--ok); font-size: 12px; }
   .muted.small { font-size: 11px; line-height: 1.5; opacity: 0.9; }
+
+  /* an explanation on request: a quiet "?" next to the heading */
+  .help {
+    width: 16px;
+    height: 16px;
+    margin-left: 6px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    vertical-align: middle;
+    cursor: pointer;
+    transition: color 120ms ease, background 120ms ease;
+  }
+  .help:hover { color: var(--text); background: var(--panel-3, rgb(255 255 255 / 0.06)); }
+  .help.on {
+    color: var(--accent, #8b7bff);
+    background: color-mix(in srgb, var(--accent, #8b7bff) 16%, transparent);
+  }
   .muted { color: var(--muted); font-size: 12px; line-height: 1.5; }
 </style>

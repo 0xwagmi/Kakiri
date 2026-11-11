@@ -7,7 +7,7 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::thread;
 
-use soundboard_lib::download;
+use wagmify_lib::download;
 
 /// Serve one canned response per connection, for `requests` connections.
 fn serve(requests: usize, status: &'static str, ctype: &'static str, body: Vec<u8>) -> String {
@@ -61,7 +61,7 @@ fn wav_bytes(secs: f32) -> Vec<u8> {
 }
 
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("kakiri-dl-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("wagmify-dl-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

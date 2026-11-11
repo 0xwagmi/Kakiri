@@ -1,7 +1,7 @@
 //! Dev harness for the URL import path:
-//! `cargo run -p soundboard --example fetch_url -- <url> <dest> [from] [to]`
+//! `cargo run -p wagmify --example fetch_url -- <url> <dest> [from] [to]`
 use std::path::PathBuf;
-use soundboard_lib::download;
+use wagmify_lib::download;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -11,7 +11,7 @@ fn main() {
         (Some(a), Some(b)) => Some((a.parse().unwrap_or(0.0), b.parse().unwrap_or(0.0))),
         _ => None,
     };
-    let dir = std::env::var("KAKIRI_TOOLS").unwrap_or_else(|_| "/tmp/kakiri-tools".into());
+    let dir = std::env::var("WAGMIFY_TOOLS").unwrap_or_else(|_| "/tmp/wagmify-tools".into());
     download::set_tools_dir(PathBuf::from(dir));
 
     // `fetch_url tool` only exercises the downloader check/update path.
@@ -39,7 +39,7 @@ fn main() {
         Some((p, v)) => println!("downloader: {} ({v})", p.display()),
         None => println!("downloader: none found"),
     }
-    let stale = std::env::var("KAKIRI_NO_FETCH").is_err()
+    let stale = std::env::var("WAGMIFY_NO_FETCH").is_err()
         && download::ytdlp().map(|(_, v)| v.as_str() < "2026.").unwrap_or(true);
     if stale {
         println!("fetching latest yt-dlp…");

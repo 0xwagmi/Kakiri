@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install a *released* Kakiri into your user account — no sudo, no Rust/Node
+# Install a *released* Wagmify into your user account — no sudo, no Rust/Node
 # toolchain, nothing written outside $PREFIX (default ~/.local).
 #
 #   ./install-release.sh                 # latest release, user-level
@@ -26,7 +26,7 @@ if [ -n "$SELF" ]; then
   SELF="$(readlink -f "$SELF")"
   ROOT="$(cd "$(dirname "$SELF")/.." && pwd)" # only used to find icons
 fi
-REPO="${KAKIRI_REPO:-0xwagmi/Kakiri}"
+REPO="${WAGMIFY_REPO:-0xwagmi/Wagmify}"
 PREFIX="${XDG_DATA_HOME:+$(dirname "$XDG_DATA_HOME")}"
 PREFIX="${PREFIX:-$HOME/.local}"
 VERSION=""
@@ -115,9 +115,9 @@ if [ "$FORCE_APPIMAGE" = "1" ] || ! command -v dpkg-deb >/dev/null; then
 fi
 
 if [ "$use_deb" = "1" ]; then
-  artifact="Kakiri_${VERSION#v}_${suffix}.deb"
+  artifact="Wagmify_${VERSION#v}_${suffix}.deb"
 else
-  artifact="Kakiri_${VERSION#v}_${suffix}.AppImage"
+  artifact="Wagmify_${VERSION#v}_${suffix}.AppImage"
 fi
 
 # Keep logs and CI output plain: artwork only when a human is watching.
@@ -137,7 +137,7 @@ ok "checksum verified"
 BIN_DIR="$PREFIX/bin"
 APP_DIR="$PREFIX/share/applications"
 ICON_ROOT="$PREFIX/share/icons/hicolor"
-BIN="$BIN_DIR/kakiri"
+BIN="$BIN_DIR/wagmify"
 mkdir -p "$BIN_DIR" "$APP_DIR"
 
 if [ "$use_deb" = "1" ]; then
@@ -149,7 +149,7 @@ if [ "$use_deb" = "1" ]; then
   while IFS= read -r icon; do
     size="$(basename "$(dirname "$(dirname "$icon")")")"
     mkdir -p "$ICON_ROOT/$size/apps"
-    install -m644 "$icon" "$ICON_ROOT/$size/apps/kakiri.png"
+    install -m644 "$icon" "$ICON_ROOT/$size/apps/wagmify.png"
   done < <(find "$tmp/root" -path '*icons/hicolor/*/apps/*.png' 2>/dev/null)
 else
   install -m755 "$tmp/$artifact" "$BIN"
@@ -158,7 +158,7 @@ else
       size="${pair%%:*}"; src="$ROOT/src-tauri/icons/${pair#*:}"
       [ -f "$src" ] || continue
       mkdir -p "$ICON_ROOT/${size}x${size}/apps"
-      install -m644 "$src" "$ICON_ROOT/${size}x${size}/apps/kakiri.png"
+      install -m644 "$src" "$ICON_ROOT/${size}x${size}/apps/wagmify.png"
     done
   fi
 fi
@@ -175,23 +175,23 @@ if command -v ldd >/dev/null; then
   fi
 fi
 
-cat >"$APP_DIR/kakiri.desktop" <<EOF
+cat >"$APP_DIR/wagmify.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Kakiri
+Name=Wagmify
 GenericName=Soundboard
 Comment=Play sounds through a virtual microphone in Discord
 Exec=$BIN
-Icon=kakiri
+Icon=wagmify
 Terminal=false
 Categories=AudioVideo;Audio;Mixer;
 Keywords=soundboard;audio;mixer;discord;mic;voice;
 StartupNotify=true
-StartupWMClass=kakiri
+StartupWMClass=wagmify
 EOF
-chmod 644 "$APP_DIR/kakiri.desktop"
-ok "desktop entry: $APP_DIR/kakiri.desktop"
+chmod 644 "$APP_DIR/wagmify.desktop"
+ok "desktop entry: $APP_DIR/wagmify.desktop"
 
 command -v update-desktop-database >/dev/null && \
   update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
@@ -199,10 +199,10 @@ command -v gtk-update-icon-cache >/dev/null && \
   gtk-update-icon-cache -q -t -f "$ICON_ROOT" >/dev/null 2>&1 || true
 
 echo
-ok "Kakiri $VERSION installed (user-level, no root)"
-echo "  launch:    kakiri        (or \"Kakiri\" in the application menu)"
+ok "Wagmify $VERSION installed (user-level, no root)"
+echo "  launch:    wagmify        (or \"Wagmify\" in the application menu)"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) warn "$BIN_DIR is not on your PATH — add: export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
-echo "  remove:    rm -f $BIN $APP_DIR/kakiri.desktop && rm -rf $PREFIX/share/icons/hicolor/*/apps/kakiri.png"
+echo "  remove:    rm -f $BIN $APP_DIR/wagmify.desktop && rm -rf $PREFIX/share/icons/hicolor/*/apps/wagmify.png"

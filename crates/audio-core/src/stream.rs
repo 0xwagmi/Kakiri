@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn pause_hands_the_mixer_silence_and_keeps_the_place() {
-        let dir = std::env::temp_dir().join("kakiri-pause-test");
+        let dir = std::env::temp_dir().join("wagmify-pause-test");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("tone.wav");

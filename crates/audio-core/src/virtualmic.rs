@@ -10,7 +10,7 @@
 //! * **ephemeral** — a `pw-loopback` child of this app. Simple, but it dies
 //!   with the app, so Discord loses its input device until it's re-created.
 //! * **persistent** — a drop-in config for the PipeWire daemon
-//!   (`$XDG_CONFIG_HOME/pipewire/pipewire.conf.d/90-kakiri-soundboard.conf`)
+//!   (`$XDG_CONFIG_HOME/pipewire/pipewire.conf.d/90-wagmify-soundboard.conf`)
 //!   that loads `libpipewire-module-loopback`. The daemon creates the nodes
 //!   itself, so they survive app exit *and* reboots, and can never be orphaned.
 //!
@@ -30,10 +30,10 @@ pub const SOURCE: &str = "Soundboard-Source";
 pub const DESCRIPTION: &str = "Soundboard Mic";
 
 /// File name of the PipeWire drop-in (also how we recognise our own file).
-const DROPIN_NAME: &str = "90-kakiri-soundboard.conf";
+const DROPIN_NAME: &str = "90-wagmify-soundboard.conf";
 
 /// The drop-in we install. Kept byte-for-byte as validated against the daemon.
-pub const CONFIG: &str = r#"# Kakiri Soundboard — virtual microphone (managed by the app).
+pub const CONFIG: &str = r#"# Wagmify Soundboard — virtual microphone (managed by the app).
 #
 # Creates two linked nodes:
 #   Soundboard-Sink   (Audio/Sink)   — the soundboard mixes its output here
