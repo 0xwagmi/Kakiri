@@ -15,8 +15,8 @@ pub mod input;
 pub mod library;
 pub mod mixer;
 pub mod output;
-#[cfg(target_os = "linux")]
 pub mod proc;
+#[cfg(target_os = "linux")]
 pub mod pw_common;
 pub mod resample;
 pub mod stream;
