@@ -113,7 +113,7 @@
   let lastfmKey = "";
   let lastfmUser = "";
   let lastfmTag = "";
-  let theme = "default";
+  let theme = "dark";
 
   const retriggerOpts = [
     { value: "layer", label: "Layer" },
@@ -1278,6 +1278,13 @@
     --accent-ring: rgba(139, 92, 246, 0.35);
     --ok: #7ddca0;
     --danger: #e0565b;
+      /* referenced by components; without them a colour resolves to nothing */
+      --text-3: #8f88ab;
+      --line: rgb(255 255 255 / 0.07);
+      --panel-1: #140f20;
+      --panel-4: #2f2549;
+      --accent-line: rgb(139 92 246 / 0.45);
+      --warn: #d8a13a;
   }
   :global(svg.lucide) { vertical-align: -0.15em; }
   :global(:root[data-theme="dark"]) {
@@ -1296,6 +1303,12 @@
     --accent-ring: rgba(139, 92, 246, 0.35);
     --ok: #00ba7c;
     --danger: #f4212e;
+    --text-3: #8b9096;
+    --line: rgb(255 255 255 / 0.07);
+    --panel-1: #101215;
+    --panel-4: #2a2f34;
+    --accent-line: rgb(139 92 246 / 0.45);
+    --warn: #d8a13a;
   }
   :global(body) {
     margin: 0;
