@@ -33,7 +33,6 @@
     can_manage: boolean;
   };
 
-  let cleared = "";
   // credentials start hidden; the eye reveals them for a moment of checking
   let showKey = false;
   let showUser = false;
@@ -41,9 +40,43 @@
   /** the "?" toggles: explanation on demand instead of a wall of text */
   let helpOnline = false;
   let helpDiscord = false;
+  let helpMic = false;
+
+  // what is on disk, so "clear" is an informed choice rather than a leap
+  let usage = { tracks_bytes: 0, tracks_files: 0, logs_bytes: 0 };
+  let cleared = "";
+
+  const mb = (b: number) =>
+    b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : b >= 1024 ** 2 ? `${Math.round(b / 1024 ** 2)} MB` : `${Math.round(b / 1024)} KB`;
+
+  async function readUsage() {
+    try {
+      usage = await invoke("cache_usage");
+    } catch {
+      /* browser preview */
+    }
+  }
+
+  async function wipe(kind: "art" | "tracks" | "logs") {
+    try {
+      const freed = await invoke<number>("cache_clear", { kind });
+      cleared =
+        kind === "art"
+          ? "Cover art cleared"
+          : kind === "tracks"
+            ? `Freed ${mb(freed)}`
+            : "Logs cleared";
+      setTimeout(() => (cleared = ""), 2500);
+      void readUsage();
+      if (kind === "art") onClearCache();
+    } catch (e) {
+      cleared = String(e);
+    }
+  }
 
   // the key is a credential: it lives in the backend's private store, not in prefs
   onMount(async () => {
+    void readUsage();
     try {
       const key = (await invoke<string | null>("secret_get", { name: "lastfm.key" })) ?? "";
       const user = (await invoke<string | null>("secret_get", { name: "lastfm.user" })) ?? "";
@@ -64,13 +97,6 @@
     }
   }
 
-  function clearCache() {
-    onClearCache();
-    cleared = "Caches cleared";
-    setTimeout(() => {
-      if (cleared === "Caches cleared") cleared = "";
-    }, 2000);
-  }
 </script>
 
 <div class="settings">
@@ -215,7 +241,18 @@
   </section>
 
   <section>
-    <h2>Virtual microphone</h2>
+    <h2>
+      Virtual microphone
+      <button
+        class="help"
+        class:on={helpMic}
+        aria-expanded={helpMic}
+        title="What keeping it across restarts means"
+        onclick={() => (helpMic = !helpMic)}
+      >
+        <CircleHelp size={13} />
+      </button>
+    </h2>
     <div class="row" style="margin-top:10px">
       <button
         class="toggle"
@@ -248,28 +285,48 @@
       </p>
       <div class="row">
         {#if mic.persistent}
-          <button class="ghost" onclick={onRemoveMic} disabled={micBusy}>
+          <button class="btn" onclick={onRemoveMic} disabled={micBusy}>
             Remove persistent mic
           </button>
         {:else}
-          <button onclick={onInstallMic} disabled={micBusy}>Keep across restarts</button>
+          <button class="btn" onclick={onInstallMic} disabled={micBusy}>
+            Keep across restarts
+          </button>
         {/if}
       </div>
-      <p class="muted">
-        Keeping it installs a PipeWire config, so the mic exists from login on and
-        Discord always has a valid input, even while Wagmify is closed. Removing it
-        takes effect once PipeWire restarts.
-      </p>
+        {#if helpMic}
+          <p class="muted">
+            Keeping it writes a PipeWire config, so the mic exists from login on and Discord always
+            has a valid input, even with Wagmify closed. Removing it takes effect when PipeWire
+            restarts.
+          </p>
+        {/if}
     {/if}
   </section>
 
   <section>
     <h2>Maintenance</h2>
-    <div class="row">
-      <button class="ghost" onclick={clearCache}>Clear cover-art cache</button>
-      {#if cleared}<span class="ok">{cleared}</span>{/if}
+    <div class="cache-list">
+      <div class="cache-row">
+        <span class="cache-name">Cover art</span>
+        <span class="cache-size">in memory</span>
+        <button class="act" onclick={() => void wipe("art")}>Clear</button>
+      </div>
+      <div class="cache-row">
+        <span class="cache-name">Streamed music</span>
+        <span class="cache-size">
+          {usage.tracks_files ? `${usage.tracks_files} files · ${mb(usage.tracks_bytes)}` : "empty"}
+        </span>
+        <button class="act" onclick={() => void wipe("tracks")} disabled={!usage.tracks_files}>Clear</button>
+      </div>
+      <div class="cache-row">
+        <span class="cache-name">Logs</span>
+        <span class="cache-size">{usage.logs_bytes ? mb(usage.logs_bytes) : "empty"}</span>
+        <button class="act" onclick={() => void wipe("logs")}>Clear</button>
+      </div>
     </div>
-    <p class="muted">Frees memory used for embedded cover art.</p>
+    <p class="muted">Saved music lives in your library folder and is never removed here.</p>
+    {#if cleared}<span class="ok">{cleared}</span>{/if}
   </section>
 
   <section>
@@ -407,6 +464,84 @@
   .toggle.on .knob { transform: translateX(14px); }
   .toggle:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 4px; border-radius: 6px; }
   .ok { color: var(--ok); font-size: 12px; }
+
+  /* maintenance rows: name on the left, one quiet action on the right */
+  .cache-list {
+    display: flex;
+    flex-direction: column;
+    max-width: 520px;
+    margin-top: 2px;
+  }
+  /* rows, not a boxed table: a hairline that fades out at both ends */
+  .cache-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto 54px;
+    align-items: baseline;
+    gap: 16px;
+    padding: 11px 2px;
+    position: relative;
+  }
+  .cache-row + .cache-row::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border) 12%, var(--border) 88%, transparent);
+  }
+  .cache-name {
+    font-size: 12.5px;
+    color: var(--text);
+    letter-spacing: -0.005em;
+  }
+  .cache-size {
+    font-size: 11.5px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  /* the action is text until you aim at it */
+  .act {
+    justify-self: end;
+    padding: 3px 0;
+    border: 0;
+    background: none;
+    color: var(--text-3);
+    font-size: 11.5px;
+    cursor: pointer;
+    transition: color 120ms ease;
+  }
+  .act:hover:not(:disabled) { color: var(--accent, #8b7bff); }
+  .act:disabled { opacity: 0.4; cursor: default; }
+  .act:focus-visible {
+    outline: 2px solid var(--accent-2, #8b7bff);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  /* secondary action: quiet until hovered, still obviously a button */
+  .btn {
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-2);
+    font-size: 11.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
+  }
+  .btn:hover:not(:disabled) {
+    color: var(--text);
+    border-color: var(--accent, #8b7bff);
+    background: rgb(139 123 255 / 0.1);
+  }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  .btn:focus-visible {
+    outline: 2px solid var(--accent-2, #8b7bff);
+    outline-offset: 2px;
+  }
+
+  .btn:focus-visible { outline: 2px solid var(--accent-2, #8b7bff); outline-offset: 2px; }
   .muted.small { font-size: 11px; line-height: 1.5; opacity: 0.9; }
 
   /* an explanation on request: a quiet "?" next to the heading */
@@ -432,7 +567,7 @@
   .help:hover { color: var(--text); background: var(--panel-3, rgb(255 255 255 / 0.06)); }
   .help.on {
     color: var(--accent, #8b7bff);
-    background: color-mix(in srgb, var(--accent, #8b7bff) 16%, transparent);
+    background: rgb(139 123 255 / 0.16);
   }
   .muted { color: var(--muted); font-size: 12px; line-height: 1.5; }
 </style>

@@ -59,7 +59,10 @@
   const shown = () => {
     const q = search.trim().toLowerCase();
     const list = q ? sounds.filter((s) => label(s).toLowerCase().includes(q)) : sounds;
-    return list.slice(0, 200);
+    // the same file can be reachable from two roots (a folder added twice, or a
+    // library that was moved): keyed each blocks throw on duplicate paths
+    const seen = new Set<string>();
+    return list.filter((s) => (seen.has(s.path) ? false : (seen.add(s.path), true))).slice(0, 200);
   };
 
   /** End of the last clip (what the ruler/scroll width is based on). */

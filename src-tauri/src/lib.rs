@@ -1706,6 +1706,85 @@ fn clear_cache(state: tauri::State<'_, AppState>) {
     state.art_cache.lock().unwrap().clear();
 }
 
+/// What is taking up room, so Settings can show a number before offering to wipe it.
+#[derive(serde::Serialize)]
+struct CacheUse {
+    tracks_bytes: u64,
+    tracks_files: u64,
+    logs_bytes: u64,
+}
+
+fn dir_bytes(dir: &std::path::Path) -> (u64, u64) {
+    let mut bytes = 0;
+    let mut files = 0;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return (0, 0);
+    };
+    for e in entries.flatten() {
+        if let Ok(meta) = e.metadata() {
+            if meta.is_file() {
+                bytes += meta.len();
+                files += 1;
+            }
+        }
+    }
+    (bytes, files)
+}
+
+#[tauri::command]
+fn cache_usage(app: tauri::AppHandle) -> CacheUse {
+    use tauri::Manager;
+    let tracks = app
+        .path()
+        .app_cache_dir()
+        .map(|d| d.join("tracks"))
+        .map(|d| dir_bytes(&d))
+        .unwrap_or((0, 0));
+    let logs = app
+        .path()
+        .app_log_dir()
+        .map(|d| dir_bytes(&d).0)
+        .unwrap_or(0);
+    CacheUse {
+        tracks_bytes: tracks.0,
+        tracks_files: tracks.1,
+        logs_bytes: logs,
+    }
+}
+
+/// Clear one kind of leftovers: `tracks` (streamed music), `logs`, or `art`.
+/// Saved music lives in the library folder and is never touched here.
+#[tauri::command]
+fn cache_clear(app: tauri::AppHandle, state: tauri::State<'_, AppState>, kind: String) -> Result<u64, String> {
+    use tauri::Manager;
+    match kind.as_str() {
+        "art" => {
+            state.art_cache.lock().unwrap().clear();
+            Ok(0)
+        }
+        "tracks" => {
+            let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("tracks");
+            let freed = dir_bytes(&dir).0;
+            let entries = std::fs::read_dir(&dir).map_err(|e| e.to_string())?;
+            for e in entries.flatten() {
+                // audio, the done marker and the coverage bitmap all go
+                let _ = std::fs::remove_file(e.path());
+            }
+            Ok(freed)
+        }
+        "logs" => {
+            let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+            let freed = dir_bytes(&dir).0;
+            for e in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+                // the running log is held open: skip it rather than fail
+                let _ = std::fs::remove_file(e.path());
+            }
+            Ok(freed)
+        }
+        other => Err(format!("unknown cache: {other}")),
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -1936,6 +2015,8 @@ pub fn run() {
             unsave_online,
             update_check,
             presence_set,
+            cache_usage,
+            cache_clear,
             presence_connected,
             secret_get,
             secret_set,

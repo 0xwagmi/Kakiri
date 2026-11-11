@@ -247,7 +247,10 @@
       acc.push(...f.sounds);
       allSounds(f.children, acc);
     }
-    return acc;
+    // two roots can point at the same file after a folder is added twice or a
+    // library is moved; keyed lists downstream would then collide
+    const seen = new Set<string>();
+    return acc.filter((s) => (seen.has(s.path) ? false : (seen.add(s.path), true)));
   }
 
   function fmtDur(s: number | null) {
